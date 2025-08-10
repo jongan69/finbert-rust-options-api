@@ -1,5 +1,5 @@
 [Unit]
-Description=FinBERT Sentiment Analysis Trading API
+Description=FinBERT Rust Options API
 Documentation=https://github.com/jongan69/finbert-rust-options-api
 After=network.target
 Wants=network.target
@@ -10,10 +10,20 @@ Type=simple
 User=finbert
 Group=finbert
 WorkingDirectory=/opt/finbert-rs
+
+# Environment variables
 Environment=RUST_LOG=info
 Environment=APCA_API_KEY_ID=your_alpaca_api_key_here
 Environment=APCA_API_SECRET_KEY=your_alpaca_secret_key_here
 Environment=APCA_BASE_URL=https://api.alpaca.markets
+
+# PyTorch virtual environment setup
+Environment=PYTORCH_VENV=/home/finbert/pytorch-venv
+Environment=LIBTORCH=/home/finbert/pytorch-venv/lib/python3.11/site-packages/torch/lib
+Environment=LD_LIBRARY_PATH=/home/finbert/pytorch-venv/lib/python3.11/site-packages/torch/lib
+
+# Python virtual environment activation
+ExecStartPre=/bin/bash -c 'source /home/finbert/pytorch-venv/bin/activate && python3 -c "import torch; print(f\"PyTorch {torch.__version__} loaded successfully\")"'
 ExecStart=/usr/local/bin/finbert-rs
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
@@ -22,12 +32,12 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=finbert-api
 
-# Security settings
+# Security settings (adjusted for virtual environment access)
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/finbert-rs/logs
+ProtectHome=false
+ReadWritePaths=/opt/finbert-rs/logs /home/finbert/pytorch-venv
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
@@ -40,9 +50,11 @@ LimitNPROC=4096
 MemoryMax=4G
 CPUQuota=200%
 
-# Health check
+# Health check and startup
 ExecStartPre=/bin/systemctl is-active --quiet network-online.target || exit 1
-TimeoutStartSec=60
+ExecStartPre=/bin/bash -c 'test -f /home/finbert/pytorch-venv/bin/activate || (echo "PyTorch virtual environment not found" && exit 1)'
+ExecStartPre=/bin/bash -c 'test -f /usr/local/bin/finbert-rs || (echo "FinBERT binary not found" && exit 1)'
+TimeoutStartSec=120
 TimeoutStopSec=30
 
 [Install]

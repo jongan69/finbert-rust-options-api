@@ -1,4 +1,4 @@
-# FinBERT on Raspberry Pi - Complete Guide
+# FinBERT Rust Options API on Raspberry Pi - Complete Guide
 
 This guide helps you run the FinBERT sentiment analysis API on Raspberry Pi's ARM64 architecture.
 

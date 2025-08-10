@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# FinBERT Rust Options API Systemd Service Installer
-# This script installs the FinBERT Rust Options API as a systemd service
+# Setup systemd service for current user's PyTorch virtual environment
+# This script adapts the service file to work with your existing setup
 
 set -e
 
@@ -12,7 +12,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to print colored output
 print_status() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -35,61 +34,43 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-print_status "Starting FinBERT API service installation..."
+print_status "Setting up FinBERT Rust Options API service for current user setup..."
+
+# Get current user info
+CURRENT_USER=$(logname || echo $SUDO_USER)
+if [[ -z "$CURRENT_USER" ]]; then
+    print_error "Could not determine current user"
+    exit 1
+fi
+
+print_status "Detected user: $CURRENT_USER"
 
 # Configuration
 SERVICE_NAME="finbert-api"
-SERVICE_USER="finbert"
-SERVICE_GROUP="finbert"
+SERVICE_USER="$CURRENT_USER"
+SERVICE_GROUP="$CURRENT_USER"
 INSTALL_DIR="/opt/finbert-rs"
 BINARY_PATH="/usr/local/bin/finbert-rs"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
-# Check if Rust is installed
-if ! command -v cargo &> /dev/null; then
-    print_error "Rust is not installed. Please install Rust first:"
-    echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+# Check if PyTorch virtual environment exists
+PYTORCH_VENV="/home/$CURRENT_USER/pytorch-venv"
+if [[ ! -d "$PYTORCH_VENV" ]]; then
+    print_error "PyTorch virtual environment not found at $PYTORCH_VENV"
+    print_error "Please run ./fix-pytorch-pi.sh first"
     exit 1
 fi
 
 # Check if the binary exists
 if [[ ! -f "target/release/finbert-rs" ]]; then
     print_warning "Binary not found. Building release version..."
-    cargo build --release
-fi
-
-# Create service user and group
-print_status "Creating service user and group..."
-if ! id "$SERVICE_USER" &>/dev/null; then
-    useradd --system --shell /bin/bash --home-dir "/home/$SERVICE_USER" --create-home "$SERVICE_USER"
-    print_success "Created user: $SERVICE_USER"
-else
-    print_status "User $SERVICE_USER already exists"
+    sudo -u "$CURRENT_USER" cargo build --release
 fi
 
 # Create installation directory
 print_status "Creating installation directory..."
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR/logs"
-
-# Set up PyTorch virtual environment for service user
-print_status "Setting up PyTorch virtual environment for service user..."
-if [[ ! -d "/home/$SERVICE_USER/pytorch-venv" ]]; then
-    print_status "Creating PyTorch virtual environment..."
-    
-    # Switch to service user to create virtual environment
-    sudo -u "$SERVICE_USER" bash -c "
-        cd /home/$SERVICE_USER
-        python3 -m venv pytorch-venv
-        source pytorch-venv/bin/activate
-        pip install --upgrade pip
-        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-        python3 -c 'import torch; print(f\"PyTorch {torch.__version__} installed successfully\")'
-    "
-    print_success "PyTorch virtual environment created for service user"
-else
-    print_status "PyTorch virtual environment already exists for service user"
-fi
 
 # Copy binary
 print_status "Installing binary..."
@@ -101,19 +82,21 @@ print_success "Binary installed to $BINARY_PATH"
 print_status "Setting file permissions..."
 chown -R "$SERVICE_USER:$SERVICE_GROUP" "$INSTALL_DIR"
 chown "$SERVICE_USER:$SERVICE_GROUP" "$BINARY_PATH"
-chown -R "$SERVICE_USER:$SERVICE_GROUP" "/home/$SERVICE_USER/pytorch-venv"
 
-# Copy service file
+# Copy and customize service file
 print_status "Installing systemd service..."
 cp finbert-api.service "$SERVICE_FILE"
 
-# Update service file with correct paths
+# Update service file with correct paths for current user
+sed -i "s|User=.*|User=$SERVICE_USER|g" "$SERVICE_FILE"
+sed -i "s|Group=.*|Group=$SERVICE_GROUP|g" "$SERVICE_FILE"
 sed -i "s|WorkingDirectory=.*|WorkingDirectory=$INSTALL_DIR|g" "$SERVICE_FILE"
 sed -i "s|ExecStart=.*|ExecStart=$BINARY_PATH|g" "$SERVICE_FILE"
-sed -i "s|PYTORCH_VENV=.*|PYTORCH_VENV=/home/$SERVICE_USER/pytorch-venv|g" "$SERVICE_FILE"
-sed -i "s|LIBTORCH=.*|LIBTORCH=/home/$SERVICE_USER/pytorch-venv/lib/python3.11/site-packages/torch/lib|g" "$SERVICE_FILE"
-sed -i "s|LD_LIBRARY_PATH=.*|LD_LIBRARY_PATH=/home/$SERVICE_USER/pytorch-venv/lib/python3.11/site-packages/torch/lib|g" "$SERVICE_FILE"
-sed -i "s|/home/finbert/pytorch-venv|/home/$SERVICE_USER/pytorch-venv|g" "$SERVICE_FILE"
+sed -i "s|PYTORCH_VENV=.*|PYTORCH_VENV=$PYTORCH_VENV|g" "$SERVICE_FILE"
+sed -i "s|LIBTORCH=.*|LIBTORCH=$PYTORCH_VENV/lib/python3.11/site-packages/torch/lib|g" "$SERVICE_FILE"
+sed -i "s|LD_LIBRARY_PATH=.*|LD_LIBRARY_PATH=$PYTORCH_VENV/lib/python3.11/site-packages/torch/lib|g" "$SERVICE_FILE"
+sed -i "s|/home/finbert/pytorch-venv|$PYTORCH_VENV|g" "$SERVICE_FILE"
+sed -i "s|ReadWritePaths=.*|ReadWritePaths=$INSTALL_DIR/logs $PYTORCH_VENV|g" "$SERVICE_FILE"
 
 # Set proper permissions for service file
 chmod 644 "$SERVICE_FILE"

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# FinBERT API Service Management Script
+# FinBERT Rust Options API Service Management Script
 # This script provides easy management of the FinBERT API systemd service
 
 set -e
@@ -34,7 +34,7 @@ print_error() {
 
 # Function to show usage
 show_usage() {
-    echo "FinBERT API Service Management"
+    echo "FinBERT Rust Options API Service Management"
     echo ""
     echo "Usage: $0 [COMMAND]"
     echo ""

@@ -1,4 +1,4 @@
-# 🤖 FinBERT Sentiment Analysis Trading API
+# 🤖 FinBERT Rust Options API
 
 A production-ready Rust API that performs real-time sentiment analysis on financial news headlines and generates actionable trading signals for options trading. This API combines the power of FinBERT (Financial BERT) with Alpaca Markets data to provide institutional-grade trading intelligence.
 
@@ -27,7 +27,7 @@ This API analyzes financial news sentiment, filters out crypto assets, and gener
 1. **Clone the repository**
 ```bash
 git clone <repository-url>
-cd finbert-rs
+cd finbert-rust-options-api
 ```
 
 2. **Set up environment variables**
