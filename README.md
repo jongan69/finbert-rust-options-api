@@ -751,6 +751,76 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 This software is for educational and research purposes only. Trading involves substantial risk of loss and is not suitable for all investors. Past performance does not guarantee future results. Always consult with a financial advisor before making investment decisions.
 
+## 🔧 **Troubleshooting Common Issues**
+
+### **PyTorch Linking Errors (ARM64/Raspberry Pi)**
+
+If you see errors like:
+```
+/usr/bin/ld: skipping incompatible /path/to/libtorch_cpu.so
+/usr/bin/ld: cannot find -ltorch_cpu: No such file or directory
+```
+
+**Solution:**
+```bash
+# 1. Clean build cache
+cargo clean
+rm -rf target/release/build/torch-sys-*
+
+# 2. Activate virtual environment
+source ~/pytorch-venv/bin/activate
+
+# 3. Set environment variables
+export LIBTORCH="$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/lib/')"
+export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
+
+# 4. Verify ARM64 libraries
+file "$LIBTORCH"/libtorch*.so
+
+# 5. Build with correct environment
+cargo build --release
+```
+
+### **"externally-managed-environment" Error**
+
+**Solution:** Use Python virtual environments (see Raspberry Pi guide)
+
+### **Memory Issues During Build**
+
+```bash
+# Increase swap space
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+```
+
+### **Service Won't Start After Reboot**
+
+```bash
+# Check service status
+sudo systemctl status finbert-api
+
+# View logs
+sudo journalctl -u finbert-api -f
+
+# Verify environment variables
+sudo systemctl show finbert-api --property=Environment
+```
+
+### **API Returns Errors**
+
+```bash
+# Check API health
+curl http://localhost:3000/health
+
+# View application logs
+sudo journalctl -u finbert-api -n 50
+
+# Test with verbose logging
+RUST_LOG=debug cargo run
+```
+
 ## 🆘 Support
 
 - **Issues**: Create an issue on GitHub

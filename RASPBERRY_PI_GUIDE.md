@@ -147,6 +147,77 @@ cargo clean
 cargo update
 ```
 
+### **PyTorch Linking Errors (Most Common)**
+
+If you see errors like:
+```
+/usr/bin/ld: skipping incompatible /path/to/libtorch_cpu.so
+/usr/bin/ld: cannot find -ltorch_cpu: No such file or directory
+```
+
+**Solution:**
+```bash
+# 1. Clean build cache completely
+cargo clean
+rm -rf target/release/build/torch-sys-*
+rm -rf ~/.cargo/registry/cache/*/torch-sys*
+
+# 2. Activate virtual environment
+source ~/pytorch-venv/bin/activate
+
+# 3. Set environment variables correctly
+export LIBTORCH="$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/lib/')"
+export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
+
+# 4. Verify ARM64 libraries
+echo "🔍 Checking library architecture:"
+file "$LIBTORCH"/libtorch*.so
+
+# 5. Build with correct environment
+cargo build --release
+```
+
+**Expected Output:**
+```
+/home/jonathangan/pytorch-venv/lib/python3.11/site-packages/torch/lib/libtorch_cpu.so: ELF 64-bit LSB shared object, ARM aarch64
+```
+
+### **Quick Fix Script**
+
+Create `fix-pytorch-linking.sh`:
+```bash
+#!/bin/bash
+echo "🔧 Fixing PyTorch linking for ARM64..."
+
+# Clean build cache
+cargo clean
+rm -rf target/release/build/torch-sys-*
+
+# Activate virtual environment
+source ~/pytorch-venv/bin/activate
+
+# Set environment variables
+export LIBTORCH="$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/lib/')"
+export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
+
+echo "📁 LIBTORCH: $LIBTORCH"
+echo "🔗 LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+
+# Verify ARM64 libraries
+echo "🔍 Checking library architecture:"
+file "$LIBTORCH"/libtorch*.so
+
+# Build
+echo "⚡️ Building with ARM64 PyTorch..."
+cargo build --release
+```
+
+Make it executable and run:
+```bash
+chmod +x fix-pytorch-linking.sh
+./fix-pytorch-linking.sh
+```
+
 ## 🔄 **Alternative: Build from Source**
 
 If pre-built packages don't work, build PyTorch from source:
