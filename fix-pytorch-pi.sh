@@ -53,8 +53,9 @@ print_status "Verifying installation..."
 python3 -c "
 import torch
 print(f'PyTorch version: {torch.__version__}')
-print(f'CPU available: {torch.backends.cpu.is_built()}')
-print('Installation successful!')
+print(f'Device: {torch.device(\"cpu\")}')
+print(f'CUDA available: {torch.cuda.is_available()}')
+print('PyTorch installation successful!')
 "
 
 # Set up environment variables
