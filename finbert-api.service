@@ -1,0 +1,49 @@
+[Unit]
+Description=FinBERT Sentiment Analysis Trading API
+Documentation=https://github.com/jongan69/finbert-rust-options-api
+After=network.target
+Wants=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=finbert
+Group=finbert
+WorkingDirectory=/opt/finbert-rs
+Environment=RUST_LOG=info
+Environment=APCA_API_KEY_ID=your_alpaca_api_key_here
+Environment=APCA_API_SECRET_KEY=your_alpaca_secret_key_here
+Environment=APCA_BASE_URL=https://api.alpaca.markets
+ExecStart=/usr/local/bin/finbert-rs
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=finbert-api
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/finbert-rs/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryMax=4G
+CPUQuota=200%
+
+# Health check
+ExecStartPre=/bin/systemctl is-active --quiet network-online.target || exit 1
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

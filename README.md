@@ -483,24 +483,116 @@ EXPOSE 3000
 CMD ["finbert-rs"]
 ```
 
-### Systemd Service
+### Systemd Service Installation
+
+#### Quick Installation
+```bash
+# Build the release version
+cargo build --release
+
+# Install as systemd service (requires sudo)
+sudo ./install-service.sh
+```
+
+#### Manual Installation
+1. **Create the service file** `/etc/systemd/system/finbert-api.service`:
 ```ini
 [Unit]
-Description=FinBERT Trading API
+Description=FinBERT Sentiment Analysis Trading API
+Documentation=https://github.com/your-repo/finbert-rs
 After=network.target
+Wants=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=finbert
+Group=finbert
 WorkingDirectory=/opt/finbert-rs
-Environment=APCA_API_KEY_ID=your_key
-Environment=APCA_API_SECRET_KEY=your_secret
+Environment=RUST_LOG=info
+Environment=APCA_API_KEY_ID=your_alpaca_api_key_here
+Environment=APCA_API_SECRET_KEY=your_alpaca_secret_key_here
+Environment=APCA_BASE_URL=https://paper-api.alpaca.markets
 ExecStart=/usr/local/bin/finbert-rs
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=finbert-api
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/finbert-rs/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryMax=4G
+CPUQuota=200%
+
+# Health check
+ExecStartPre=/bin/systemctl is-active --quiet network-online.target || exit 1
+TimeoutStartSec=60
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target
+```
+
+2. **Install the binary**:
+```bash
+sudo cp target/release/finbert-rs /usr/local/bin/
+sudo chmod +x /usr/local/bin/finbert-rs
+```
+
+3. **Create service user**:
+```bash
+sudo useradd --system --shell /bin/false --home-dir /opt/finbert-rs --create-home finbert
+```
+
+4. **Enable and start the service**:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable finbert-api
+sudo systemctl start finbert-api
+```
+
+#### Service Management
+Use the provided management script for easy service control:
+
+```bash
+# Check service status
+./manage-service.sh status
+
+# Start the service
+sudo ./manage-service.sh start
+
+# Stop the service
+sudo ./manage-service.sh stop
+
+# Restart the service
+sudo ./manage-service.sh restart
+
+# View logs
+./manage-service.sh logs
+
+# Check API health
+./manage-service.sh health
+
+# Show API metrics
+./manage-service.sh metrics
+
+# Show all available commands
+./manage-service.sh help
 ```
 
 ## 📊 Monitoring & Alerting
