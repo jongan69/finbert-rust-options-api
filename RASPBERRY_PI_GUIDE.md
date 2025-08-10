@@ -1,313 +1,306 @@
-# 🍓 **FinBERT on Raspberry Pi - Complete Guide**
+# FinBERT on Raspberry Pi - Complete Guide
 
-This guide will help you get FinBERT running on your Raspberry Pi with ARM64 architecture.
+This guide helps you run the FinBERT sentiment analysis API on Raspberry Pi's ARM64 architecture.
 
-## 🎯 **The Problem**
+## 🚨 **Important: Externally Managed Environment Fix**
 
-Your Raspberry Pi runs ARM64 architecture, but PyTorch libraries are typically built for x86_64. This causes linking errors when trying to compile Rust projects that depend on `rust-bert` and `tch` (PyTorch bindings).
+**NEW**: Modern Debian/Raspberry Pi OS uses "externally managed environments" that prevent system-wide pip installations. We now use Python virtual environments to solve this.
 
-## 🔧 **Solutions**
+## 🎯 **Quick Start (Recommended)**
 
-### **Option 1: Install Pre-built ARM64 PyTorch (Recommended - Faster)**
-
-This is the fastest approach and works for most cases:
+### **Option 1: Automatic Fix Script**
 
 ```bash
-# Make the script executable
-chmod +x install-pytorch-pi.sh
-
-# Run the installation script
-./install-pytorch-pi.sh
+# Download and run the fix script
+chmod +x fix-pytorch-pi.sh
+./fix-pytorch-pi.sh
 ```
 
-**What this does:**
-- Installs system dependencies
-- Downloads pre-built ARM64 PyTorch wheels
-- Sets up environment variables
-- Verifies the installation
+This script will:
+- Install required system packages
+- Create a Python virtual environment
+- Install ARM64-compatible PyTorch
+- Set up environment variables
+- Verify the installation
 
-**Time:** ~10-30 minutes
-
-### **Option 2: Build PyTorch from Source (More Reliable)**
-
-If the pre-built approach doesn't work, build PyTorch from source:
+### **Option 2: Manual Installation**
 
 ```bash
-# Make the script executable
-chmod +x build-pytorch-pi.sh
+# 1. Install system dependencies
+sudo apt-get update
+sudo apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    python3-full \
+    libopenblas-dev \
+    liblapack-dev \
+    libgomp1 \
+    libnuma-dev \
+    pkg-config
 
-# Run the build script
-./build-pytorch-pi.sh
+# 2. Create virtual environment
+python3 -m venv ~/pytorch-venv
+
+# 3. Activate virtual environment
+source ~/pytorch-venv/bin/activate
+
+# 4. Install PyTorch
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# 5. Verify installation
+python3 -c "import torch; print(f'PyTorch version: {torch.__version__}')"
 ```
 
-**What this does:**
-- Installs all build dependencies
-- Clones PyTorch source code
-- Builds PyTorch for ARM64 architecture
-- Installs the built libraries
-- Sets up environment variables
+## 🔧 **Environment Setup**
 
-**Time:** 2-4 hours (depending on Pi model)
+After installation, the script adds these to your `~/.bashrc`:
 
-**Requirements:**
-- Raspberry Pi 4 with 4GB+ RAM recommended
-- Adequate cooling (fan/heatsink)
-- Stable power supply
-- At least 8GB free space
-
-## 🚀 **Quick Start**
-
-### **Step 1: Check Your Pi Architecture**
 ```bash
-uname -m
-```
-Should output: `aarch64` (for Pi 4) or `armv7l` (for older Pi models)
-
-### **Step 2: Install PyTorch**
-```bash
-# Try the fast method first
-./install-pytorch-pi.sh
-
-# If that fails, use the build method
-./build-pytorch-pi.sh
+# PyTorch Virtual Environment
+export PYTORCH_VENV=~/pytorch-venv
+export LIBTORCH=/path/to/pytorch/lib
+export LD_LIBRARY_PATH=/path/to/pytorch/lib:$LD_LIBRARY_PATH
+alias activate-pytorch='source ~/pytorch-venv/bin/activate'
 ```
 
-### **Step 3: Restart Terminal**
+**Reload your environment:**
 ```bash
 source ~/.bashrc
 ```
 
-### **Step 4: Build Your Rust Project**
+## 🏗️ **Building the Rust Project**
+
 ```bash
 # Clean previous builds
 cargo clean
 
-# Build the project
+# Build with release optimizations
 cargo build --release
-```
 
-### **Step 5: Run the API**
-```bash
+# Run the API
 cargo run
 ```
 
-## 🔍 **Troubleshooting**
+## 📊 **Performance Expectations**
 
-### **Common Issues**
+| Component | Time | Notes |
+|-----------|------|-------|
+| PyTorch Installation | 10-30 min | Depends on internet speed |
+| First API Request | 10-30 sec | Model loading |
+| Subsequent Requests | 1-3 sec | Cached model |
+| Memory Usage | 2-4 GB | During model loading |
+| CPU Usage | 50-80% | During inference |
 
-#### **1. Memory Issues During Build**
+## 🛠️ **Troubleshooting**
+
+### **"externally-managed-environment" Error**
+
+**Solution**: Use the virtual environment approach above. This is the modern way to handle Python packages on Debian systems.
+
+### **Memory Issues**
+
 ```bash
-# Increase swap space
-sudo dphys-swapfile swapoff
-sudo nano /etc/dphys-swapfile
-# Change CONF_SWAPSIZE=100 to CONF_SWAPSIZE=2048
-sudo dphys-swapfile setup
-sudo dphys-swapfile swapon
+# Check available memory
+free -h
+
+# If low memory, increase swap
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
 ```
 
-#### **2. Thermal Throttling**
+### **Thermal Throttling**
+
 ```bash
 # Monitor CPU temperature
 vcgencmd measure_temp
 
-# If > 80°C, add cooling or reduce build jobs
-export MAX_JOBS=1
+# If overheating, add cooling or reduce load
 ```
 
-#### **3. PyTorch Installation Fails**
+### **Installation Failures**
+
 ```bash
-# Try alternative installation methods
-pip3 install torch --no-cache-dir --force-reinstall
-pip3 install torch --index-url https://download.pytorch.org/whl/cpu
+# Try alternative PyTorch sources
+pip install --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cpu
+
+# Or build from source (slower but more reliable)
+chmod +x build-pytorch-pi.sh
+./build-pytorch-pi.sh
 ```
 
-#### **4. Rust Build Still Fails**
-```bash
-# Check if PyTorch is properly installed
-python3 -c "import torch; print(torch.__version__)"
+### **Rust Build Errors**
 
-# Check environment variables
+```bash
+# Update Rust
+rustup update
+
+# Check PyTorch environment
 echo $LIBTORCH
 echo $LD_LIBRARY_PATH
 
-# Reinstall Rust dependencies
+# Reinstall rust-bert
 cargo clean
 cargo update
 ```
 
-### **Alternative: Cross-Compilation**
+## 🔄 **Alternative: Build from Source**
 
-If building on Pi is too slow, build on your PC and transfer:
+If pre-built packages don't work, build PyTorch from source:
 
 ```bash
-# On your PC (x86_64)
-cargo build --release --target aarch64-unknown-linux-gnu
-
-# Transfer binary to Pi
-scp target/aarch64-unknown-linux-gnu/release/finbert-rs pi@your-pi-ip:/home/pi/
+chmod +x build-pytorch-pi.sh
+./build-pytorch-pi.sh
 ```
 
-## 📊 **Performance Considerations**
-
-### **Memory Usage**
-- **FinBERT Model:** ~500MB RAM
-- **PyTorch Runtime:** ~200MB RAM
-- **Total:** ~1GB RAM minimum
-
-### **CPU Usage**
-- **Model Loading:** High CPU usage initially
-- **Inference:** Moderate CPU usage
-- **Recommendation:** Pi 4 with 4GB+ RAM
-
-### **Storage**
-- **PyTorch Libraries:** ~2GB
-- **FinBERT Model:** ~500MB
-- **Total:** ~3GB free space needed
-
-## 🔧 **Optimization Tips**
-
-### **1. Use Release Build**
-```bash
-cargo build --release
-```
-
-### **2. Enable CPU Optimizations**
-```bash
-export RUSTFLAGS="-C target-cpu=native"
-cargo build --release
-```
-
-### **3. Reduce Model Size**
-```bash
-# In your code, use smaller model variants
-let config = SentimentConfig {
-    model_type: ModelType::Distilbert,
-    // ... other config
-};
-```
-
-### **4. Enable Caching**
-```bash
-# The API already caches the model in memory
-# First request: 10-30 seconds
-# Subsequent requests: <1 second
-```
+**Note**: This takes 2-6 hours but ensures compatibility.
 
 ## 🐳 **Docker Alternative**
 
-If you prefer Docker (requires QEMU emulation):
+If you prefer containerization:
 
 ```dockerfile
-FROM --platform=linux/amd64 rust:1.70 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
+FROM arm64v8/python:3.11-slim
 
-FROM --platform=linux/amd64 debian:bullseye-slim
-RUN apt-get update && apt-get install -y ca-certificates
-COPY --from=builder /app/target/release/finbert-rs /usr/local/bin/
-EXPOSE 3000
-CMD ["finbert-rs"]
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libopenblas-dev \
+    liblapack-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Add your Rust application here
 ```
-
-**Note:** Docker with emulation is slower than native ARM64 builds.
 
 ## 📋 **System Requirements**
 
-### **Minimum**
-- Raspberry Pi 4 (2GB RAM)
-- 8GB SD card
-- Active cooling
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| RAM | 4 GB | 8 GB |
+| Storage | 8 GB free | 16 GB free |
+| CPU | ARM64 (aarch64) | ARM64 with 4+ cores |
+| OS | Raspberry Pi OS 11+ | Raspberry Pi OS 12+ |
 
-### **Recommended**
-- Raspberry Pi 4 (4GB+ RAM)
-- 16GB+ SD card
-- Active cooling
-- SSD storage (optional)
+## 🔍 **Verification Steps**
 
-### **Optimal**
-- Raspberry Pi 4 (8GB RAM)
-- 32GB+ SD card
-- Active cooling
-- USB 3.0 SSD
+1. **PyTorch Installation:**
+   ```bash
+   source ~/pytorch-venv/bin/activate
+   python3 -c "import torch; print(torch.__version__)"
+   ```
 
-## 🔄 **Maintenance**
+2. **Environment Variables:**
+   ```bash
+   echo $LIBTORCH
+   echo $LD_LIBRARY_PATH
+   ```
+
+3. **Rust Build:**
+   ```bash
+   cargo build --release
+   ```
+
+4. **API Test:**
+   ```bash
+   cargo run &
+   curl http://localhost:3000/health
+   ```
+
+## 🚀 **Production Deployment**
+
+### **Systemd Service**
+
+```bash
+# Install as system service
+sudo ./install-service.sh
+
+# Manage service
+./manage-service.sh start
+./manage-service.sh status
+./manage-service.sh logs
+```
+
+### **Performance Optimization**
+
+```bash
+# Set CPU governor to performance
+echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+
+# Increase file descriptor limits
+echo "* soft nofile 65536" | sudo tee -a /etc/security/limits.conf
+echo "* hard nofile 65536" | sudo tee -a /etc/security/limits.conf
+```
+
+## 📈 **Monitoring**
+
+```bash
+# Check API health
+curl http://localhost:3000/health
+
+# View metrics
+curl http://localhost:3000/metrics
+
+# Monitor system resources
+htop
+iotop
+```
+
+## 🔧 **Maintenance**
 
 ### **Update PyTorch**
+
 ```bash
-pip3 install --upgrade torch torchvision torchaudio
+source ~/pytorch-venv/bin/activate
+pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 ```
 
 ### **Update Rust Dependencies**
+
 ```bash
 cargo update
 cargo build --release
 ```
 
-### **Monitor Performance**
+### **Clean Up**
+
 ```bash
-# Check memory usage
-free -h
+# Remove old builds
+cargo clean
 
-# Check CPU usage
-htop
-
-# Check temperature
-vcgencmd measure_temp
+# Clean pip cache
+pip cache purge
 ```
+
+## ✅ **Success Indicators**
+
+- ✅ PyTorch imports without errors
+- ✅ `cargo build --release` completes successfully
+- ✅ API starts and responds to health checks
+- ✅ Sentiment analysis returns results
+- ✅ Memory usage stabilizes after model loading
 
 ## 🆘 **Getting Help**
 
-### **If PyTorch Build Fails**
-1. Check your Pi model and RAM
-2. Ensure adequate cooling
-3. Try the pre-built installation first
-4. Check PyTorch GitHub issues for ARM64
+If you encounter issues:
 
-### **If Rust Build Fails**
-1. Verify PyTorch installation
-2. Check environment variables
-3. Clean and rebuild
-4. Check Rust toolchain version
+1. Check the troubleshooting section above
+2. Verify system requirements
+3. Ensure virtual environment is activated
+4. Check environment variables are set
+5. Review logs: `./manage-service.sh logs`
 
-### **If API Runs Slowly**
-1. Use release builds
-2. Monitor system resources
-3. Consider model optimization
-4. Check network connectivity
+## 🎉 **Next Steps**
 
-## 🎉 **Success Indicators**
+Once your API is running:
 
-You'll know it's working when:
-
-1. **PyTorch installs successfully:**
-   ```bash
-   python3 -c "import torch; print('PyTorch OK')"
-   ```
-
-2. **Rust builds without errors:**
-   ```bash
-   cargo build --release
-   ```
-
-3. **API starts successfully:**
-   ```bash
-   cargo run
-   # Should show: 🚀 Server running on http://127.0.0.1:3000
-   ```
-
-4. **First request works:**
-   ```bash
-   curl http://localhost:3000/health
-   # Should return JSON response
-   ```
-
-## 📚 **Additional Resources**
-
-- [PyTorch ARM64 Build Guide](https://github.com/pytorch/pytorch/issues/48865)
-- [Rust Cross-Compilation](https://rust-lang.github.io/rustup/cross-compilation.html)
-- [Raspberry Pi Performance Tuning](https://www.raspberrypi.org/documentation/configuration/performance-tuning.md)
-
----
+1. **Configure Alpaca API keys** in `.env`
+2. **Test the analysis endpoint**: `curl http://localhost:3000/analyze`
+3. **Integrate with your trading bot**
+4. **Set up monitoring and alerts**
+5. **Optimize for your specific use case**
 
 **Happy coding on your Raspberry Pi! 🍓🚀**
