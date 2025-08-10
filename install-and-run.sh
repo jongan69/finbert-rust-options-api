@@ -136,6 +136,25 @@ print_step "Installing PyTorch..."
 if [[ "$ARCH" == "aarch64" || "$ARCH" == "armv7l" ]]; then
     print_status "Installing ARM64 PyTorch..."
     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+    
+    # Check if headers are available
+    print_step "Checking PyTorch headers..."
+    if [[ ! -f "$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/lib\/include\/torch\/torch.h')" ]]; then
+        print_warning "PyTorch headers not found. ARM64 wheels may not include development headers."
+        print_status "Attempting to install PyTorch with development components..."
+        pip uninstall torch torchvision torchaudio -y
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --force-reinstall
+        
+        # Check again
+        if [[ ! -f "$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/lib\/include\/torch\/torch.h')" ]]; then
+            print_warning "PyTorch headers still missing. This may cause build issues."
+            print_status "You may need to build PyTorch from source or use a different approach."
+        else
+            print_success "PyTorch headers found after reinstall"
+        fi
+    else
+        print_success "PyTorch headers found"
+    fi
 else
     print_status "Installing x86_64 PyTorch..."
     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
@@ -192,9 +211,30 @@ print_step "Cleaning previous builds..."
 cargo clean
 
 print_step "Building with release optimizations..."
-cargo build --release
 
-print_success "Rust project built successfully"
+# Try to build
+if cargo build --release; then
+    print_success "Rust project built successfully"
+else
+    print_warning "Build failed. This may be due to missing PyTorch headers."
+    print_status "Attempting to fix PyTorch linking issues..."
+    
+    # Run the fix script
+    if [[ -f "fix-pytorch-linking.sh" ]]; then
+        print_step "Running PyTorch linking fix..."
+        ./fix-pytorch-linking.sh
+    else
+        print_error "fix-pytorch-linking.sh not found. Manual intervention required."
+        print_status "Please run the following commands manually:"
+        echo "cargo clean"
+        echo "rm -rf target/release/build/torch-sys-*"
+        echo "source ~/pytorch-venv/bin/activate"
+        echo "export LIBTORCH=\"\$(python3 -c \"import torch; print(torch.__file__)\" | head -1 | sed 's/__init__.py/lib/')\""
+        echo "export LD_LIBRARY_PATH=\"\$LIBTORCH:\$LD_LIBRARY_PATH\""
+        echo "cargo build --release"
+        exit 1
+    fi
+fi
 
 # Step 7: Set up environment file
 print_header "Step 7: Setting Up Environment Configuration"
