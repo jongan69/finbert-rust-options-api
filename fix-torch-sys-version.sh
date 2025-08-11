@@ -22,9 +22,9 @@ fi
 current_version=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "not installed")
 echo -e "${BLUE}[INFO]${NC} Current PyTorch version: $current_version"
 
-# Set environment variable to bypass version check
+# Set environment variable to bypass version check (needed for all versions with torch-sys 0.17.0)
 export LIBTORCH_BYPASS_VERSION_CHECK=1
-echo -e "${BLUE}[INFO]${NC} Set LIBTORCH_BYPASS_VERSION_CHECK=1"
+echo -e "${BLUE}[INFO]${NC} Set LIBTORCH_BYPASS_VERSION_CHECK=1 (torch-sys 0.17.0 has specific version expectations)"
 
 # Clean build cache
 echo -e "${BLUE}[INFO]${NC} Cleaning build cache..."

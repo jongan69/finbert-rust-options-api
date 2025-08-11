@@ -13,11 +13,7 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="finbert-rs"
 VENV_PATH="$HOME/pytorch-venv"
-PYTORCH_VERSION="2.8.0"
-PYTORCH_FALLBACK_VERSION="2.7.0"
-PYTORCH_LEGACY_VERSION="2.6.0"
 RUST_BERT_VERSION="0.23.0"
-USE_DOWNLOAD_LIBTORCH=true
 
 # Function to print colored output
 print_status() {
@@ -111,121 +107,20 @@ setup_python_env() {
     print_success "Python environment ready"
 }
 
-# Function to install PyTorch with compatibility fixes
-install_pytorch() {
-    print_step "Installing PyTorch with compatibility fixes..."
+# Function to setup environment file
+setup_env_file() {
+    print_step "Setting up environment configuration..."
     
-    # Check current PyTorch version
-    local current_version=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "not installed")
-    print_status "Current PyTorch version: $current_version"
-    
-    # Fix NumPy version first
-    local numpy_version=$(python3 -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "not installed")
-    if [[ "$numpy_version" == "2."* ]]; then
-        print_warning "NumPy 2.x detected, downgrading to 1.x for compatibility"
-        pip uninstall numpy -y
-        pip install "numpy<2.0"
-        print_status "NumPy downgraded to $(python3 -c "import numpy; print(numpy.__version__)")"
-    fi
-    
-    # Check if we're using download-libtorch feature
-    if [[ "$USE_DOWNLOAD_LIBTORCH" == "true" ]]; then
-        print_status "Using download-libtorch feature - PyTorch will be downloaded automatically"
-        print_warning "PyTorch installation will be handled by rust-bert's download-libtorch feature"
-        print_status "This should eliminate version compatibility issues"
+    if [[ ! -f ".env" ]]; then
+        print_status "Creating .env file from template..."
+        cp env.example .env
+        print_warning "Please edit .env file with your Alpaca API credentials:"
+        echo "  APCA_API_KEY_ID=your_api_key_here"
+        echo "  APCA_API_SECRET_KEY=your_secret_key_here"
+        echo "  APCA_BASE_URL=https://paper-api.alpaca.markets"
     else
-        # Install compatible PyTorch version
-        if [[ "$current_version" != "$PYTORCH_VERSION" ]]; then
-        print_status "Installing PyTorch $PYTORCH_VERSION for torch-sys compatibility..."
-        pip uninstall torch torchvision torchaudio -y 2>/dev/null || true
-        
-        # Try to install the preferred version first (2.8.0 - required by tch-rs)
-        if pip install "torch==$PYTORCH_VERSION" "torchvision==0.23.0" "torchaudio==$PYTORCH_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
-            local new_version=$(python3 -c "import torch; print(torch.__version__)")
-            # Check if version starts with the expected version (handles +cpu suffix)
-            if [[ "$new_version" == "$PYTORCH_VERSION"* ]]; then
-                print_success "PyTorch $new_version installed successfully (compatible with tch-rs)"
-            else
-                print_error "Failed to install PyTorch $PYTORCH_VERSION, got $new_version"
-                exit 1
-            fi
-        else
-            print_warning "PyTorch $PYTORCH_VERSION not available, trying fallback version $PYTORCH_FALLBACK_VERSION..."
-            if pip install "torch==$PYTORCH_FALLBACK_VERSION" "torchvision==0.22.0" "torchaudio==$PYTORCH_FALLBACK_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
-                local new_version=$(python3 -c "import torch; print(torch.__version__)")
-                print_success "PyTorch $new_version installed successfully (fallback version)"
-                print_warning "This version may have compatibility issues with tch-rs"
-            else
-                print_warning "PyTorch $PYTORCH_FALLBACK_VERSION not available, trying legacy version $PYTORCH_LEGACY_VERSION..."
-                if pip install "torch==$PYTORCH_LEGACY_VERSION" "torchvision==0.21.0" "torchaudio==$PYTORCH_LEGACY_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
-                    local new_version=$(python3 -c "import torch; print(torch.__version__)")
-                    print_success "PyTorch $new_version installed successfully (legacy version)"
-                    print_warning "This version will require LIBTORCH_BYPASS_VERSION_CHECK=1"
-                else
-                    print_error "Failed to install PyTorch. Please install manually:"
-                    echo "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
-                    exit 1
-                fi
-            fi
-        fi
-    else
-        print_success "PyTorch $PYTORCH_VERSION already installed"
+        print_success ".env file already exists"
     fi
-    fi
-}
-
-# Function to setup environment variables
-setup_environment() {
-    print_step "Setting up environment variables..."
-    
-    # Check if we're using download-libtorch feature
-    if [[ "$USE_DOWNLOAD_LIBTORCH" == "true" ]]; then
-        print_status "Using download-libtorch feature - environment variables will be set automatically"
-        print_status "No manual PyTorch environment setup needed"
-        return 0
-    fi
-    
-    # Get PyTorch path
-    local torch_path=$(python3 -c "import torch; print(torch.__file__)" 2>/dev/null)
-    if [[ -z "$torch_path" ]]; then
-        print_error "PyTorch not found. Please ensure PyTorch is installed."
-        exit 1
-    fi
-    
-    # Set environment variables
-    export LIBTORCH="$(echo "$torch_path" | sed 's/__init__.py/lib/')"
-    export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
-    export LIBTORCH_INCLUDE="$(echo "$torch_path" | sed 's/__init__.py//')"
-    export LIBTORCH_USE_PYTORCH=1
-    export LIBTORCH_CXX11_ABI=0
-    export LIBTORCH_STATIC=0
-    
-    # Check for PyTorch version compatibility with torch-sys
-    local torch_version=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "not installed")
-    if [[ "$torch_version" != "not installed" ]]; then
-        print_status "PyTorch version: $torch_version"
-        
-        # Set bypass flag for all versions since torch-sys 0.17.0 has specific version expectations
-        if [[ "$torch_version" == "2.1."* ]] || [[ "$torch_version" == "2.2."* ]] || [[ "$torch_version" == "2.3."* ]] || [[ "$torch_version" == "2.4."* ]] || [[ "$torch_version" == "2.5."* ]] || [[ "$torch_version" == "2.6."* ]] || [[ "$torch_version" == "2.7."* ]]; then
-            print_warning "PyTorch version $torch_version may have compatibility issues with tch-rs (requires 2.8.0)"
-            print_status "Setting LIBTORCH_BYPASS_VERSION_CHECK to bypass version check"
-            export LIBTORCH_BYPASS_VERSION_CHECK=1
-        elif [[ "$torch_version" == "2.8."* ]]; then
-            print_success "PyTorch version $torch_version is compatible with tch-rs"
-            print_warning "However, torch-sys 0.17.0 expects PyTorch 2.4.0, setting bypass flag"
-            export LIBTORCH_BYPASS_VERSION_CHECK=1
-        else
-            print_warning "Unknown PyTorch version $torch_version, setting bypass flag for safety"
-            export LIBTORCH_BYPASS_VERSION_CHECK=1
-        fi
-    fi
-    
-    print_status "Environment variables set:"
-    print_status "  LIBTORCH: $LIBTORCH"
-    print_status "  LIBTORCH_INCLUDE: $LIBTORCH_INCLUDE"
-    print_status "  LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
-    
-    print_success "Environment setup complete"
 }
 
 # Function to download FinBERT model
@@ -246,22 +141,6 @@ download_finbert_model() {
     fi
 }
 
-# Function to setup environment file
-setup_env_file() {
-    print_step "Setting up environment configuration..."
-    
-    if [[ ! -f ".env" ]]; then
-        print_status "Creating .env file from template..."
-        cp env.example .env
-        print_warning "Please edit .env file with your Alpaca API credentials:"
-        echo "  APCA_API_KEY_ID=your_api_key_here"
-        echo "  APCA_API_SECRET_KEY=your_secret_key_here"
-        echo "  APCA_BASE_URL=https://paper-api.alpaca.markets"
-    else
-        print_success ".env file already exists"
-    fi
-}
-
 # Function to clean build cache
 clean_build_cache() {
     print_step "Cleaning build cache..."
@@ -275,7 +154,7 @@ clean_build_cache() {
 
 # Function to build the project
 build_project() {
-    print_step "Building FinBERT Rust application..."
+    print_step "Building FinBERT Rust application with download-libtorch feature..."
     
     # Set build jobs based on available memory
     if command_exists free; then
@@ -292,9 +171,12 @@ build_project() {
         print_warning "Using single core build (could not detect memory)"
     fi
     
-    print_status "Building with release profile..."
+    print_status "Building with release profile and download-libtorch feature..."
+    print_status "This will automatically download the correct PyTorch version"
+    
     if cargo build --release; then
         print_success "Build completed successfully!"
+        print_success "✅ No version compatibility issues with download-libtorch feature"
     else
         print_error "Build failed. Check the error messages above."
         exit 1
@@ -332,6 +214,11 @@ show_usage() {
     echo "  --clean          Clean build cache before building"
     echo "  --help           Show this help message"
     echo ""
+    echo "Features:"
+    echo "  ✅ Uses download-libtorch feature for automatic PyTorch compatibility"
+    echo "  ✅ No manual PyTorch installation required"
+    echo "  ✅ Eliminates version compatibility issues"
+    echo ""
     echo "Examples:"
     echo "  $0               # Full setup and run"
     echo "  $0 --setup-only  # Setup environment only"
@@ -350,8 +237,9 @@ trap cleanup SIGINT SIGTERM
 
 # Main execution
 main() {
-    echo -e "${CYAN}🤖 FinBERT Rust Options API - Install & Run Script${NC}"
-    echo -e "${CYAN}================================================${NC}"
+    echo -e "${CYAN}🤖 FinBERT Rust Options API - Updated Install & Run Script${NC}"
+    echo -e "${CYAN}========================================================${NC}"
+    echo -e "${CYAN}Using download-libtorch feature for better compatibility${NC}"
     echo ""
     
     # Parse command line arguments
@@ -400,10 +288,8 @@ main() {
         print_step "Build-only mode selected"
         check_requirements
         setup_python_env
-        install_pytorch
-        setup_environment
-        download_finbert_model
         setup_env_file
+        download_finbert_model
         if [[ "$CLEAN_BUILD" == true ]]; then
             clean_build_cache
         fi
@@ -412,10 +298,8 @@ main() {
         print_step "Setup-only mode selected"
         check_requirements
         setup_python_env
-        install_pytorch
-        setup_environment
-        download_finbert_model
         setup_env_file
+        download_finbert_model
         print_success "Setup completed successfully!"
         echo ""
         print_status "Next steps:"
@@ -427,10 +311,8 @@ main() {
         print_step "Full setup and run mode"
         check_requirements
         setup_python_env
-        install_pytorch
-        setup_environment
-        download_finbert_model
         setup_env_file
+        download_finbert_model
         if [[ "$CLEAN_BUILD" == true ]]; then
             clean_build_cache
         fi

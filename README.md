@@ -25,32 +25,52 @@ This API analyzes financial news sentiment, filters out crypto assets, and gener
 - Alpaca Markets API credentials
 - 4GB+ RAM (for FinBERT model loading)
 
-### Installation
+### Option 1: Updated Approach (Recommended) ⭐
+Uses automatic PyTorch compatibility - no manual setup required!
 
-1. **Clone the repository**
 ```bash
+# Clone the repository
 git clone <repository-url>
-cd finbert-rust-options-api
+cd finbert-rs
+
+# Run the updated installation script
+./install-and-run-updated.sh
 ```
 
-2. **Set up environment variables**
+### Option 2: Original Approach
+For environments where automatic download isn't preferred:
+
 ```bash
-# Create .env file
+# Clone the repository
+git clone <repository-url>
+cd finbert-rs
+
+# Set up environment variables
 cp .env.example .env
+# Edit .env with your Alpaca credentials
 
-# Add your Alpaca credentials
-echo "APCA_API_KEY_ID=your_api_key_here" >> .env
-echo "APCA_API_SECRET_KEY=your_secret_key_here" >> .env
-echo "APCA_BASE_URL=https://paper-api.alpaca.markets" >> .env
+# Build and run
+./install-and-run.sh
 ```
 
-3. **Build and run**
+### Manual Installation (Advanced)
 ```bash
+# Clone the repository
+git clone <repository-url>
+cd finbert-rs
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your Alpaca credentials
+
+# Build and run
 cargo build --release
 cargo run
 ```
 
 The API will be available at `http://127.0.0.1:3000`
+
+**📖 See [UPDATED_APPROACH.md](UPDATED_APPROACH.md) for detailed comparison and benefits.**
 
 ## 📊 API Endpoints
 
