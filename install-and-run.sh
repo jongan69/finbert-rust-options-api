@@ -176,6 +176,19 @@ setup_environment() {
     export LIBTORCH_CXX11_ABI=0
     export LIBTORCH_STATIC=0
     
+    # Check for PyTorch version compatibility with torch-sys
+    local torch_version=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "not installed")
+    if [[ "$torch_version" != "not installed" ]]; then
+        print_status "PyTorch version: $torch_version"
+        
+        # If we have a version mismatch, set bypass flag
+        if [[ "$torch_version" == "2.1."* ]] || [[ "$torch_version" == "2.2."* ]] || [[ "$torch_version" == "2.3."* ]]; then
+            print_warning "PyTorch version $torch_version may have compatibility issues with torch-sys 0.17.0"
+            print_status "Setting LIBTORCH_BYPASS_VERSION_CHECK to bypass version check"
+            export LIBTORCH_BYPASS_VERSION_CHECK=1
+        fi
+    fi
+    
     print_status "Environment variables set:"
     print_status "  LIBTORCH: $LIBTORCH"
     print_status "  LIBTORCH_INCLUDE: $LIBTORCH_INCLUDE"
