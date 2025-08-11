@@ -66,7 +66,13 @@ check_requirements() {
     
     # Check Python version
     local python_version=$(python3 --version 2>&1 | grep -oP '\d+\.\d+' | head -1)
-    if [[ "$python_version" < "3.8" ]]; then
+    print_status "Detected Python version: $python_version"
+    
+    # Convert version to comparable numbers (e.g., 3.11 -> 311, 3.8 -> 308)
+    local major_minor=$(echo "$python_version" | sed 's/\.//')
+    local required_version="38"
+    
+    if [[ "$major_minor" -lt "$required_version" ]]; then
         print_error "Python 3.8+ required, found $python_version"
         exit 1
     fi
