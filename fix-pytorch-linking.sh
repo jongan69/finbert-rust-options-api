@@ -30,8 +30,8 @@ echo -e "${BLUE}[INFO]${NC} 📁 LIBTORCH: $LIBTORCH"
 export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
 echo -e "${BLUE}[INFO]${NC} 🔗 LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
-# Set the correct include path for headers
-export LIBTORCH_INCLUDE="$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/include/')"
+# Set the correct include path for headers (without /include suffix since torch-sys adds it)
+export LIBTORCH_INCLUDE="$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py//')"
 echo -e "${BLUE}[INFO]${NC} 📁 LIBTORCH_INCLUDE: $LIBTORCH_INCLUDE"
 
 # Step 4: Check library architecture
