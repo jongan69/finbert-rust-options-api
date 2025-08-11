@@ -49,6 +49,37 @@ check_requirements() {
         print_warning "This script is optimized for ARM64 (Raspberry Pi). You're running on $(uname -m)"
     fi
     
+    # Check for required system packages on Raspberry Pi
+    if [[ "$(uname -m)" == "aarch64" ]]; then
+        print_status "Checking required system packages for Raspberry Pi..."
+        missing_packages=()
+        
+        if ! dpkg -l | grep -q "build-essential"; then
+            missing_packages+=("build-essential")
+        fi
+        if ! dpkg -l | grep -q "pkg-config"; then
+            missing_packages+=("pkg-config")
+        fi
+        if ! dpkg -l | grep -q "libssl-dev"; then
+            missing_packages+=("libssl-dev")
+        fi
+        if ! dpkg -l | grep -q "cmake"; then
+            missing_packages+=("cmake")
+        fi
+        
+        if [[ ${#missing_packages[@]} -gt 0 ]]; then
+            print_warning "Missing required packages: ${missing_packages[*]}"
+            print_status "Please install them with: sudo apt update && sudo apt install ${missing_packages[*]}"
+            read -p "Install missing packages now? (y/N): " install_deps
+            if [[ "$install_deps" =~ ^[Yy]$ ]]; then
+                sudo apt update && sudo apt install "${missing_packages[@]}"
+            else
+                print_error "Required packages not installed. Exiting..."
+                exit 1
+            fi
+        fi
+    fi
+    
     # Check Rust
     if ! command_exists cargo; then
         print_error "Rust/Cargo not found. Please install Rust first:"
@@ -105,11 +136,12 @@ setup_python_env() {
     
     # Install PyTorch based on architecture
     if [[ "$(uname -m)" == "aarch64" ]]; then
-        print_status "Installing PyTorch for ARM64 (Raspberry Pi)..."
-        pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+        print_status "Installing compatible PyTorch for ARM64 (Raspberry Pi)..."
+        # Use PyTorch 2.1.0 which is compatible with torch-sys 0.17.0
+        pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu
     else
-        print_status "Installing PyTorch for $(uname -m)..."
-        pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+        print_status "Installing compatible PyTorch for $(uname -m)..."
+        pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu
     fi
     
     print_success "Python environment ready"
@@ -124,7 +156,12 @@ clean_pytorch() {
     # Deactivate virtual environment if active
     if [[ -n "$VIRTUAL_ENV" ]]; then
         print_status "Deactivating virtual environment"
-        deactivate
+        if command_exists deactivate; then
+            deactivate
+        else
+            unset VIRTUAL_ENV
+            export PATH="${PATH//$VIRTUAL_ENV\/bin:/}"
+        fi
     fi
     
     # Remove existing virtual environment
@@ -186,9 +223,20 @@ build_project() {
         if [[ "$mem_gb" -lt 4 ]]; then
             export CARGO_BUILD_JOBS=1
             print_warning "Using single core build due to limited memory (${mem_gb}GB)"
+            # Add swap usage for low memory systems
+            if [[ "$mem_gb" -lt 2 ]]; then
+                print_warning "Very low memory detected. Consider increasing swap space."
+                print_status "You can increase swap with: sudo dphys-swapfile swapoff && sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile && sudo dphys-swapfile setup && sudo dphys-swapfile swapon"
+            fi
         else
-            export CARGO_BUILD_JOBS=$(nproc)
-            print_status "Using $(nproc) cores for build (${mem_gb}GB available)"
+            # Limit concurrent jobs on ARM64 to prevent memory issues
+            if [[ "$(uname -m)" == "aarch64" ]]; then
+                export CARGO_BUILD_JOBS=2
+                print_status "Using 2 cores for ARM64 build (${mem_gb}GB available)"
+            else
+                export CARGO_BUILD_JOBS=$(nproc)
+                print_status "Using $(nproc) cores for build (${mem_gb}GB available)"
+            fi
         fi
     else
         export CARGO_BUILD_JOBS=1
@@ -225,9 +273,23 @@ setup_pytorch_environment() {
     export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
     export LIBTORCH_INCLUDE="$(echo "$torch_path" | sed 's/__init__.py//')"
     export LIBTORCH_USE_PYTORCH=1
-    export LIBTORCH_CXX11_ABI=0
-    export LIBTORCH_STATIC=0
     export LIBTORCH_BYPASS_VERSION_CHECK=1
+    export LIBTORCH_STATIC=0
+    
+    # Set C++ ABI compatibility for ARM64/Raspberry Pi
+    if [[ "$(uname -m)" == "aarch64" ]]; then
+        export LIBTORCH_CXX11_ABI=1  # Use new C++11 ABI for ARM64
+        export TORCH_CUDA_VERSION=none  # Disable CUDA for CPU-only build
+        export CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu  # Explicit target for ARM64
+        export CC=gcc
+        export CXX=g++
+    else
+        export LIBTORCH_CXX11_ABI=0  # Use old ABI for other architectures
+    fi
+    
+    # Additional environment variables for torch-sys compatibility
+    export TORCH_CUDA_ARCH_LIST=""  # Empty for CPU-only builds
+    export CMAKE_PREFIX_PATH="$LIBTORCH"
     
     print_status "PyTorch environment variables set"
 }
