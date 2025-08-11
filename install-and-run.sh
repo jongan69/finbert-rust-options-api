@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="finbert-rs"
 VENV_PATH="$HOME/pytorch-venv"
 PYTORCH_VERSION="2.1.2"
+PYTORCH_FALLBACK_VERSION="2.2.0"
 RUST_BERT_VERSION="0.23.0"
 
 # Function to print colored output
@@ -65,7 +66,7 @@ check_requirements() {
     fi
     
     # Check Python version
-    local python_version=$(python3 --version 2>&1 | grep -oP '\d+\.\d+' | head -1)
+    local python_version=$(python3 --version 2>&1 | sed 's/Python //' | cut -d. -f1,2)
     print_status "Detected Python version: $python_version"
     
     # Convert version to comparable numbers (e.g., 3.11 -> 311, 3.8 -> 308)
@@ -78,9 +79,13 @@ check_requirements() {
     fi
     
     # Check memory
-    local mem_gb=$(free -g | awk '/^Mem:/{print $2}')
-    if [[ "$mem_gb" -lt 2 ]]; then
-        print_warning "Low memory detected (${mem_gb}GB). 4GB+ recommended for optimal performance."
+    if command_exists free; then
+        local mem_gb=$(free -g | awk '/^Mem:/{print $2}' 2>/dev/null || echo "0")
+        if [[ "$mem_gb" -lt 2 ]]; then
+            print_warning "Low memory detected (${mem_gb}GB). 4GB+ recommended for optimal performance."
+        fi
+    else
+        print_warning "Could not detect memory size. 4GB+ recommended for optimal performance."
     fi
     
     print_success "System requirements check passed"
@@ -118,21 +123,34 @@ install_pytorch() {
         print_warning "NumPy 2.x detected, downgrading to 1.x for compatibility"
         pip uninstall numpy -y
         pip install "numpy<2.0"
+        print_status "NumPy downgraded to $(python3 -c "import numpy; print(numpy.__version__)")"
     fi
     
     # Install compatible PyTorch version
     if [[ "$current_version" != "$PYTORCH_VERSION" ]]; then
         print_status "Installing PyTorch $PYTORCH_VERSION for torch-sys compatibility..."
         pip uninstall torch torchvision torchaudio -y 2>/dev/null || true
-        pip install "torch==$PYTORCH_VERSION" "torchvision==0.16.2" "torchaudio==$PYTORCH_VERSION" --index-url https://download.pytorch.org/whl/cpu
         
-        # Verify installation
-        local new_version=$(python3 -c "import torch; print(torch.__version__)")
-        if [[ "$new_version" == "$PYTORCH_VERSION" ]]; then
-            print_success "PyTorch $PYTORCH_VERSION installed successfully"
+        # Try to install the preferred version first
+        if pip install "torch==$PYTORCH_VERSION" "torchvision==0.16.2" "torchaudio==$PYTORCH_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
+            local new_version=$(python3 -c "import torch; print(torch.__version__)")
+            if [[ "$new_version" == "$PYTORCH_VERSION" ]]; then
+                print_success "PyTorch $PYTORCH_VERSION installed successfully"
+            else
+                print_error "Failed to install PyTorch $PYTORCH_VERSION"
+                exit 1
+            fi
         else
-            print_error "Failed to install PyTorch $PYTORCH_VERSION"
-            exit 1
+            print_warning "PyTorch $PYTORCH_VERSION not available, trying fallback version $PYTORCH_FALLBACK_VERSION..."
+            if pip install "torch==$PYTORCH_FALLBACK_VERSION" "torchvision==0.17.0" "torchaudio==$PYTORCH_FALLBACK_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
+                local new_version=$(python3 -c "import torch; print(torch.__version__)")
+                print_success "PyTorch $new_version installed successfully (fallback version)"
+                print_warning "This version may have compatibility issues with torch-sys 0.17.0"
+            else
+                print_error "Failed to install PyTorch. Please install manually:"
+                echo "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
+                exit 1
+            fi
         fi
     else
         print_success "PyTorch $PYTORCH_VERSION already installed"
@@ -216,13 +234,18 @@ build_project() {
     print_step "Building FinBERT Rust application..."
     
     # Set build jobs based on available memory
-    local mem_gb=$(free -g | awk '/^Mem:/{print $2}')
-    if [[ "$mem_gb" -lt 4 ]]; then
-        export CARGO_BUILD_JOBS=1
-        print_warning "Using single core build due to limited memory"
+    if command_exists free; then
+        local mem_gb=$(free -g | awk '/^Mem:/{print $2}' 2>/dev/null || echo "0")
+        if [[ "$mem_gb" -lt 4 ]]; then
+            export CARGO_BUILD_JOBS=1
+            print_warning "Using single core build due to limited memory (${mem_gb}GB)"
+        else
+            export CARGO_BUILD_JOBS=$(nproc)
+            print_status "Using $(nproc) cores for build (${mem_gb}GB available)"
+        fi
     else
-        export CARGO_BUILD_JOBS=$(nproc)
-        print_status "Using $(nproc) cores for build"
+        export CARGO_BUILD_JOBS=1
+        print_warning "Using single core build (could not detect memory)"
     fi
     
     print_status "Building with release profile..."
