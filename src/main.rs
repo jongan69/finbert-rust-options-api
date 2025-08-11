@@ -5,42 +5,108 @@ use axum::{
     routing::get,
     Router,
 };
-use rust_bert::pipelines::sentiment::{SentimentConfig, SentimentModel, SentimentPolarity};
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::{
+    cors::{Any, CorsLayer},
+    limit::RequestBodyLimitLayer,
+    timeout::TimeoutLayer,
+    trace::TraceLayer,
+};
 use once_cell::sync::Lazy;
+use futures::stream::{self, StreamExt};
 
 mod alpaca_data;
 mod types;
+mod onnx_sentiment;
 
-use types::*;
+use types::{TradingBotResponse, SentimentAnalysis, OptionAnalysis, SymbolOptionsAnalysis, TopOption, ExecutionMetadata};
+use onnx_sentiment::{OnnxSentimentModelArc, initialize_onnx_sentiment_model, predict_sentiment_batch};
 
 // Global configuration
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AppConfig {
     pub max_concurrent_requests: usize,
     pub sentiment_model_path: String,
     pub alpaca_api_key: String,
     pub alpaca_secret_key: String,
     pub alpaca_base_url: String,
+    pub server_host: String,
+    pub server_port: u16,
+    pub request_timeout_secs: u64,
+    pub max_text_length: usize,
+}
+
+impl AppConfig {
+    pub fn from_env() -> anyhow::Result<Self> {
+        let config = Self {
+            max_concurrent_requests: std::env::var("MAX_CONCURRENT_REQUESTS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10),
+            
+            sentiment_model_path: std::env::var("SENTIMENT_MODEL_PATH")
+                .unwrap_or_else(|_| "finbert-onnx".to_string()),
+            
+            alpaca_api_key: std::env::var("APCA_API_KEY_ID")
+                .map_err(|_| anyhow::anyhow!("APCA_API_KEY_ID environment variable is required"))?,
+            
+            alpaca_secret_key: std::env::var("APCA_API_SECRET_KEY")
+                .map_err(|_| anyhow::anyhow!("APCA_API_SECRET_KEY environment variable is required"))?,
+            
+            alpaca_base_url: std::env::var("APCA_BASE_URL")
+                .unwrap_or_else(|_| "https://paper-api.alpaca.markets".to_string()),
+            
+            server_host: std::env::var("SERVER_HOST")
+                .unwrap_or_else(|_| "127.0.0.1".to_string()),
+            
+            server_port: std::env::var("SERVER_PORT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3000),
+            
+            request_timeout_secs: std::env::var("REQUEST_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(30),
+            
+            max_text_length: std::env::var("MAX_TEXT_LENGTH")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10000),
+        };
+        
+        tracing::info!("Configuration loaded: max_concurrent_requests={}, model_path={}, server={}:{}", 
+            config.max_concurrent_requests, 
+            config.sentiment_model_path,
+            config.server_host,
+            config.server_port
+        );
+        
+        Ok(config)
+    }
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             max_concurrent_requests: 10,
-            sentiment_model_path: "finbert-sentiment".to_string(),
+            sentiment_model_path: "finbert-onnx".to_string(),
             alpaca_api_key: std::env::var("APCA_API_KEY_ID").unwrap_or_default(),
             alpaca_secret_key: std::env::var("APCA_API_SECRET_KEY").unwrap_or_default(),
             alpaca_base_url: std::env::var("APCA_BASE_URL").unwrap_or_else(|_| "https://paper-api.alpaca.markets".to_string()),
+            server_host: "127.0.0.1".to_string(),
+            server_port: 3000,
+            request_timeout_secs: 30,
+            max_text_length: 10000,
         }
     }
 }
 
 // Thread-safe sentiment model with lazy initialization
-static SENTIMENT_MODEL: Lazy<Mutex<Option<SentimentModel>>> = Lazy::new(|| {
+static ONNX_SENTIMENT_MODEL: Lazy<Mutex<Option<OnnxSentimentModelArc>>> = Lazy::new(|| {
     Mutex::new(None)
 });
 
@@ -66,10 +132,10 @@ pub enum AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         let (status, error_message) = match self {
-            AppError::SentimentAnalysis(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+            AppError::SentimentAnalysis(msg) | AppError::Internal(msg) | AppError::Config(msg) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, msg)
+            }
             AppError::AlpacaApi(msg) => (StatusCode::BAD_GATEWAY, msg),
-            AppError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-            AppError::Config(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
 
         let body = Json(serde_json::json!({
@@ -83,17 +149,42 @@ impl IntoResponse for AppError {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Initialize structured logging
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "finbert_rs=info,tower_http=debug".into()),
+        )
+        .with_target(false)
+        .compact()
+        .init();
+
+    tracing::info!("🚀 Starting FinBERT Sentiment Analysis API");
+
     // Load environment variables
     dotenv::dotenv().ok();
     
     // Initialize configuration
-    let config = AppConfig::default();
+    let config = AppConfig::from_env()?;
     
-    // Validate required environment variables
-    if config.alpaca_api_key.is_empty() || config.alpaca_secret_key.is_empty() {
-        eprintln!("❌ Missing required environment variables: ALPACA_API_KEY and ALPACA_SECRET_KEY");
-        std::process::exit(1);
+    // Initialize ONNX sentiment model
+    tracing::info!("🔄 Initializing ONNX sentiment model...");
+    let onnx_model = initialize_onnx_sentiment_model().await
+        .map_err(|e| {
+            tracing::error!("❌ Failed to initialize ONNX sentiment model: {}", e);
+            e
+        })?;
+    
+    {
+        let mut model_guard = ONNX_SENTIMENT_MODEL.lock().await;
+        *model_guard = Some(onnx_model);
     }
+    tracing::info!("✅ ONNX sentiment model initialized successfully");
+    
+    // Save server config before moving into state
+    let server_host = config.server_host.clone();
+    let server_port = config.server_port;
+    let request_timeout_secs = config.request_timeout_secs;
     
     // Initialize application state
     let state = Arc::new(AppState { config });
@@ -104,20 +195,24 @@ async fn main() -> anyhow::Result<()> {
         .allow_origin(Any)
         .allow_headers(Any);
     
-    // Build our application with routes
+    // Build our application with routes and middleware
     let app = Router::new()
         .route("/analyze", get(analyze_endpoint))
         .route("/health", get(health_check))
         .route("/metrics", get(metrics_endpoint))
+        .layer(TraceLayer::new_for_http())
         .layer(cors)
+        .layer(TimeoutLayer::new(Duration::from_secs(request_timeout_secs)))
+        .layer(RequestBodyLimitLayer::new(1024 * 1024)) // 1MB limit
         .with_state(state);
     
     // Run the server
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
-    println!("🚀 Server running on http://127.0.0.1:3000");
-    println!("📊 Analysis endpoint: http://127.0.0.1:3000/analyze");
-    println!("❤️  Health check: http://127.0.0.1:3000/health");
-    println!("📈 Metrics: http://127.0.0.1:3000/metrics");
+    let bind_addr = format!("{server_host}:{server_port}");
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    tracing::info!("🚀 Server running on http://{}", bind_addr);
+    tracing::info!("📊 Analysis endpoint: http://{}/analyze", bind_addr);
+    tracing::info!("❤️  Health check: http://{}/health", bind_addr);
+    tracing::info!("📈 Metrics: http://{}/metrics", bind_addr);
     
     axum::serve(listener, app).await?;
     
@@ -125,43 +220,98 @@ async fn main() -> anyhow::Result<()> {
 }
 
 // Health check endpoint
-async fn health_check() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "status": "healthy",
+pub async fn health_check() -> impl IntoResponse {
+    let model_status = {
+        let model_guard = ONNX_SENTIMENT_MODEL.lock().await;
+        match model_guard.as_ref() {
+            Some(_) => "loaded",
+            None => "not_loaded",
+        }
+    };
+
+    let health_status = if model_status == "loaded" { "healthy" } else { "unhealthy" };
+    let status_code = if health_status == "healthy" { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+
+    let response = Json(serde_json::json!({
+        "status": health_status,
         "timestamp": chrono::Utc::now().to_rfc3339(),
         "version": env!("CARGO_PKG_VERSION"),
-    }))
+        "model": "onnx-runtime",
+        "model_status": model_status,
+        "uptime_seconds": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    }));
+
+    (status_code, response).into_response()
 }
 
 // Metrics endpoint for monitoring
-async fn metrics_endpoint(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn metrics_endpoint(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let system_info = get_system_metrics();
+    
     Json(serde_json::json!({
         "config": {
             "max_concurrent_requests": state.config.max_concurrent_requests,
             "alpaca_base_url": state.config.alpaca_base_url,
+            "model_type": "onnx-runtime",
+            "server_host": state.config.server_host,
+            "server_port": state.config.server_port,
+            "max_text_length": state.config.max_text_length,
         },
+        "system": system_info,
         "timestamp": chrono::Utc::now().to_rfc3339(),
     }))
+}
+
+fn get_system_metrics() -> serde_json::Value {
+    serde_json::json!({
+        "cpu_count": num_cpus::get(),
+        "memory": {
+            "available_mb": "unknown", // Would need sysinfo crate for this
+        },
+        "process": {
+            "uptime_seconds": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        }
+    })
 }
 
 async fn analyze_endpoint(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     let start_time = std::time::Instant::now();
     
+    tracing::info!("📊 Starting sentiment analysis request");
+    
     match perform_analysis(&state.config).await {
         Ok(mut response) => {
             // Update execution metadata with actual timing
-            response.execution_metadata.processing_time_ms = start_time.elapsed().as_millis() as u64;
+            response.execution_metadata.processing_time_ms = start_time.elapsed().as_millis().min(u64::MAX as u128) as u64;
             
-            println!("✅ Analysis completed successfully in {}ms", response.execution_metadata.processing_time_ms);
+            tracing::info!(
+                duration_ms = response.execution_metadata.processing_time_ms,
+                symbols_analyzed = response.execution_metadata.symbols_analyzed,
+                options_analyzed = response.execution_metadata.options_analyzed,
+                "✅ Analysis completed successfully"
+            );
+            
             Ok((StatusCode::OK, Json(response)).into_response())
         }
         Err(e) => {
-            println!("❌ Analysis failed: {e}");
+            let duration_ms = start_time.elapsed().as_millis().min(u64::MAX as u128) as u64;
+            tracing::error!(
+                error = %e,
+                duration_ms = duration_ms,
+                "❌ Analysis failed"
+            );
             Err(AppError::Internal(e.to_string()))
         }
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotResponse> {
     // Get news and filter headlines with symbols
     let input = alpaca_data::get_alpaca_news().await
@@ -180,7 +330,7 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
                 let headline = item["headline"].as_str().unwrap_or("");
                 let symbols_vec: Vec<String> = symbols.iter()
                     .filter_map(|s| s.as_str())
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect();
                 
                 news_with_symbols.push((headline.to_string(), symbols_vec));
@@ -189,36 +339,27 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
         }
     }
     
-    // Run sentiment analysis with better error handling
+    // Run sentiment analysis with ONNX model
     let sentiments = {
-        let mut model_guard = SENTIMENT_MODEL.lock().await;
-        if model_guard.is_none() {
-            // Initialize model in a blocking task to avoid runtime conflicts
-            let model = tokio::task::spawn_blocking(|| {
-                SentimentModel::new(SentimentConfig::default())
-            }).await
-                .map_err(|e| anyhow::anyhow!("Failed to spawn blocking task: {}", e))?
-                .map_err(|e| anyhow::anyhow!("Failed to initialize sentiment model: {}", e))?;
-            *model_guard = Some(model);
-        }
+        let model_guard = ONNX_SENTIMENT_MODEL.lock().await;
+        let model_arc = model_guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("ONNX sentiment model not initialized"))?;
         
-        model_guard.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Failed to get sentiment model reference"))?
-            .predict(&headlines)
+        // Convert &str to String for the batch prediction
+        let headlines_strings: Vec<String> = headlines.iter().map(std::string::ToString::to_string).collect();
+        
+        predict_sentiment_batch(model_arc, &headlines_strings).await
+            .map_err(|e| anyhow::anyhow!("ONNX sentiment analysis failed: {}", e))?
     };
     
-    // Create sentiment analysis results in parallel
+    // Create sentiment analysis results
     let mut sentiment_results: Vec<_> = news_with_symbols.iter().zip(sentiments.iter()).map(|((headline, symbols), sentiment)| {
-        let sentiment_str = match sentiment.polarity {
-            SentimentPolarity::Positive => "Positive".to_string(),
-            SentimentPolarity::Negative => "Negative".to_string(),
-        };
-        
         SentimentAnalysis {
             headline: headline.clone(),
             symbols: symbols.clone(),
-            sentiment: sentiment_str,
-            confidence: sentiment.score,
+            sentiment: sentiment.sentiment.clone(),
+            confidence: sentiment.confidence,
         }
     }).collect();
     
@@ -226,8 +367,8 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
     sentiment_results.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
     
     // Count sentiments (for potential future use)
-    let _positive_count = sentiments.iter().filter(|s| s.polarity == SentimentPolarity::Positive).count();
-    let _negative_count = sentiments.iter().filter(|s| s.polarity == SentimentPolarity::Negative).count();
+    let _positive_count = sentiments.iter().filter(|s| s.sentiment == "positive").count();
+    let _negative_count = sentiments.iter().filter(|s| s.sentiment == "negative").count();
     
     let news_analysis = sentiment_results;
     
@@ -252,7 +393,7 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
     println!("Filtered out {} crypto symbols: {:?}", crypto_symbols.len(), crypto_symbols);
     
     // Analyze options for unique symbols in parallel
-    let overall_sentiment = if sentiments.iter().any(|s| s.polarity == SentimentPolarity::Positive) {
+    let overall_sentiment = if sentiments.iter().any(|s| s.sentiment == "positive") {
         "call"
     } else {
         "put"
@@ -340,7 +481,6 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
     let mut top_options = Vec::new();
     
     // Use futures::stream::iter with buffer_unordered for controlled concurrency
-    use futures::stream::{self, StreamExt};
     let mut stream = stream::iter(options_futures).buffer_unordered(config.max_concurrent_requests);
     
     while let Some(result) = stream.next().await {

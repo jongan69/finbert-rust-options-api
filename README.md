@@ -1,80 +1,128 @@
-# 🤖 FinBERT Rust Options API
+# FinBERT Sentiment Analysis Trading API
 
-A production-ready Rust API that performs real-time sentiment analysis on financial news headlines and generates actionable trading signals for options trading. This API combines the power of FinBERT (Financial BERT) with Alpaca Markets data to provide institutional-grade trading intelligence.
+A production-ready sentiment analysis API using FinBERT ONNX models for automated trading signal generation, optimized for Raspberry Pi deployment.
 
-## 🎯 Overview
+## 🚀 Quick Setup
 
-This API analyzes financial news sentiment, filters out crypto assets, and generates comprehensive trading signals with risk metrics, making it perfect for automated trading bots and algorithmic trading systems.
-
-### Key Features
-- **Real-time sentiment analysis** using FinBERT model
-- **Options chain analysis** with high open interest filtering
-- **Professional risk metrics** (Sharpe, Sortino, Calmar ratios)
-- **Trading signal generation** with confidence scores
-- **Crypto filtering** to avoid unnecessary API calls
-- **Production-ready** with retry logic, timeouts, and monitoring
-- **Parallel processing** for optimal performance
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Rust 1.70+ 
-- Alpaca Markets API credentials
-- 4GB+ RAM (for FinBERT model loading)
-
-### Option 1: Recommended Installation ⭐
-Uses automatic PyTorch compatibility - no manual setup required!
+**One-command setup for Raspberry Pi:**
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd finbert-rs
-
-# Run the installation script
-./install.sh
+curl -sSL https://raw.githubusercontent.com/your-repo/finbert-rs/main/setup-rpi.sh | bash
 ```
 
-### Option 2: Original Approach
-For environments where automatic download isn't preferred:
+**Or manual setup:**
 
 ```bash
-# Clone the repository
-git clone <repository-url>
+git clone https://github.com/your-repo/finbert-rs
 cd finbert-rs
-
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your Alpaca credentials
-
-# Build and run
-./install-and-run.sh
+chmod +x setup-rpi.sh
+./setup-rpi.sh
 ```
 
-### Manual Installation (Advanced)
+## 📋 Prerequisites
+
+- Raspberry Pi 3B+ or newer (recommended: Pi 4 with 4GB+ RAM)
+- Raspbian/Raspberry Pi OS (64-bit recommended)
+- Internet connection for downloading dependencies and model
+- [Alpaca API credentials](https://alpaca.markets/) (free paper trading account)
+
+## ⚙️ Configuration
+
+1. **Get Alpaca API credentials** (free at https://alpaca.markets/)
+2. **Edit configuration:**
+   ```bash
+   nano .env
+   ```
+3. **Set your credentials:**
+   ```bash
+   APCA_API_KEY_ID=your_actual_api_key
+   APCA_API_SECRET_KEY=your_actual_secret
+   ```
+
+## 🎮 Management Commands
+
+After setup, use these commands:
+
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd finbert-rs
+./start-api.sh    # Start the API service
+./stop-api.sh     # Stop the API service  
+./status-api.sh   # Check service status
+./logs-api.sh     # View real-time logs
+```
 
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your Alpaca credentials
+## 🌐 API Endpoints
 
-# Build and run
+Once running, access these endpoints:
+
+- **Analysis:** `http://your-pi-ip:3000/analyze` - Complete trading analysis
+- **Health Check:** `http://your-pi-ip:3000/health` - Service health status
+- **Metrics:** `http://your-pi-ip:3000/metrics` - System metrics
+
+## 🔧 What the Setup Script Does
+
+1. ✅ **Updates system packages**
+2. ✅ **Installs Rust toolchain** 
+3. ✅ **Downloads FinBERT ONNX model** from Hugging Face
+4. ✅ **Builds optimized binary** for your Pi's architecture
+5. ✅ **Creates systemd service** for auto-startup
+6. ✅ **Sets up configuration** template
+7. ✅ **Creates management scripts**
+
+## 📊 Performance
+
+**Typical performance on Raspberry Pi 4 (4GB):**
+- Model loading: ~10-15 seconds
+- Inference time: ~200-500ms per request
+- Memory usage: ~600MB
+- Concurrent requests: 5 (configurable)
+
+## 🛠️ Manual Operations
+
+**Build from source:**
+```bash
 cargo build --release
-cargo run
 ```
 
-The API will be available at `http://127.0.0.1:3000`
+**Run directly:**
+```bash
+APCA_API_KEY_ID=key APCA_API_SECRET_KEY=secret ./target/release/finbert-rs
+```
 
-## 📊 API Endpoints
+**Check service logs:**
+```bash
+sudo journalctl -u finbert-api.service -f
+```
+
+## 📁 File Structure
+
+```
+finbert-rs/
+├── setup-rpi.sh           # One-click setup script
+├── start-api.sh           # Start service
+├── stop-api.sh            # Stop service  
+├── status-api.sh          # Check status
+├── logs-api.sh            # View logs
+├── .env                   # Configuration
+├── finbert-onnx/          # ONNX model files
+├── target/release/        # Compiled binary
+└── src/                   # Source code
+```
+
+## 📊 Trading API Endpoints
 
 ### 1. Main Analysis Endpoint
 **`GET /analyze`**
 
-Performs complete sentiment analysis and generates trading signals.
+Performs complete sentiment analysis and generates trading signals with advanced financial metrics.
 
 **Response Time:** ~2-5 seconds (depending on market conditions)
+
+**Features:**
+- Real-time news sentiment analysis using FinBERT ONNX
+- Options trading signal generation
+- Risk-adjusted return calculations
+- Portfolio risk metrics
+- Kelly Criterion position sizing
 
 **Example Response:**
 ```json
@@ -690,11 +738,79 @@ max_single_position = 0.05     # 5% per position
 RUST_LOG=debug cargo run
 ```
 
-## 📚 API Reference
+## 🔒 Security & Risk Management
 
-### Response Schema
+- API runs on local network by default
+- Configure `SERVER_HOST=0.0.0.0` in `.env` for external access
+- Use reverse proxy (nginx) for production internet exposure
+- API keys are stored securely in environment variables
+- Input validation prevents malicious payloads
+- Rate limiting and request size limits configured
 
-#### Market Summary
+### Position Sizing & Risk Controls
+```python
+# Conservative approach
+position_size = min(
+    signal.kelly_fraction * portfolio_value,
+    portfolio_value * 0.02 / signal.max_loss  # 2% max risk per trade
+)
+
+# Stop loss based on max_loss
+stop_loss = signal.entry_price - signal.max_loss
+
+# Portfolio limits
+max_portfolio_exposure = 0.20  # 20% of portfolio
+max_single_position = 0.05     # 5% per position
+```
+
+## 🧠 How It Works
+
+### 1. News Analysis Pipeline
+- Fetches real-time financial news from Alpaca API
+- Filters news containing stock symbols
+- Runs FinBERT ONNX sentiment analysis on headlines
+- Generates confidence scores for each sentiment prediction
+
+### 2. Trading Signal Generation
+- Analyzes options chains for detected symbols
+- Calculates advanced financial metrics (Sharpe, Sortino, Calmar ratios)
+- Applies Kelly Criterion for optimal position sizing
+- Generates buy/sell signals based on sentiment + technical analysis
+
+### 3. Risk Assessment
+- Calculates portfolio-level risk metrics
+- Estimates Value at Risk (VaR) and Expected Shortfall
+- Provides sector exposure analysis
+- Monitors correlation between positions
+
+## 📈 Signal Interpretation Guide
+
+### Signal Types
+- **`BUY_CALL`**: Bullish sentiment, buy call options
+- **`BUY_PUT`**: Bearish sentiment, buy put options
+- **`SELL_CALL`**: Bearish sentiment, sell call options (covered calls)
+- **`SELL_PUT`**: Bullish sentiment, sell put options (cash-secured puts)
+
+### Confidence Levels
+- **0.9+**: Very high confidence - Strong signal
+- **0.8-0.9**: High confidence - Good signal
+- **0.7-0.8**: Medium confidence - Moderate signal
+- **<0.7**: Low confidence - Weak signal
+
+### Risk Scores
+- **0.0-0.3**: Low risk
+- **0.3-0.7**: Medium risk
+- **0.7-1.0**: High risk
+
+### Financial Metrics
+- **Sharpe Ratio**: >1.0 = Good risk-adjusted returns
+- **Sortino Ratio**: >1.0 = Good downside risk management
+- **Calmar Ratio**: >1.0 = Good return vs drawdown
+- **Kelly Fraction**: Optimal position sizing (0.0-1.0)
+
+## 📚 API Response Schema
+
+### Market Summary
 ```typescript
 interface MarketSummary {
   timestamp: string;
@@ -709,7 +825,7 @@ interface MarketSummary {
 }
 ```
 
-#### Trading Signal
+### Trading Signal
 ```typescript
 interface TradingSignal {
   symbol: string;
@@ -735,73 +851,15 @@ interface TradingSignal {
 }
 ```
 
-#### Financial Metrics
-```typescript
-interface FinancialMetrics {
-  sharpe_ratio: number;
-  sortino_ratio: number;
-  calmar_ratio: number;
-  max_drawdown: number;
-  volatility: number;
-  composite_score: number;
-  kelly_fraction: number;
-  var_95: number;
-  expected_shortfall: number;
-}
-```
+## 🐞 Troubleshooting
 
-## 🤝 Contributing
+### Build Issues
+**Build fails:**
+- Ensure you have enough RAM (4GB+ recommended)
+- Try: `sudo swapoff -a && sudo swapon -a` to clear swap
+- Check: `free -h` for available memory
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run `cargo clippy` to ensure code quality
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## ⚠️ Disclaimer
-
-This software is for educational and research purposes only. Trading involves substantial risk of loss and is not suitable for all investors. Past performance does not guarantee future results. Always consult with a financial advisor before making investment decisions.
-
-## 🔧 **Troubleshooting Common Issues**
-
-### **PyTorch Linking Errors (ARM64/Raspberry Pi)**
-
-If you see errors like:
-```
-/usr/bin/ld: skipping incompatible /path/to/libtorch_cpu.so
-/usr/bin/ld: cannot find -ltorch_cpu: No such file or directory
-```
-
-**Solution:**
-```bash
-# 1. Clean build cache
-cargo clean
-rm -rf target/release/build/torch-sys-*
-
-# 2. Activate virtual environment
-source ~/pytorch-venv/bin/activate
-
-# 3. Set environment variables
-export LIBTORCH="$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/lib/')"
-export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
-
-# 4. Verify ARM64 libraries
-file "$LIBTORCH"/libtorch*.so
-
-# 5. Build with correct environment
-cargo build --release
-```
-
-### **"externally-managed-environment" Error**
-
-**Solution:** Use Python virtual environments (see Raspberry Pi guide)
-
-### **Memory Issues During Build**
-
+**Memory issues during build:**
 ```bash
 # Increase swap space
 sudo fallocate -l 2G /swapfile
@@ -810,8 +868,18 @@ sudo mkswap /swapfile
 sudo swapon /swapfile
 ```
 
-### **Service Won't Start After Reboot**
+### Model Issues
+**Model not loading:**
+- Check: `ls -la finbert-onnx/` for model files
+- Try: `git clone https://huggingface.co/jonngan/finbert-onnx` manually
 
+### Service Issues
+**Service won't start:**
+- Check: `./status-api.sh` for error messages
+- Verify: `.env` file has correct API credentials
+- View: `./logs-api.sh` for detailed error info
+
+**Service won't start after reboot:**
 ```bash
 # Check service status
 sudo systemctl status finbert-api
@@ -823,8 +891,8 @@ sudo journalctl -u finbert-api -f
 sudo systemctl show finbert-api --property=Environment
 ```
 
-### **API Returns Errors**
-
+### API Issues
+**API returns errors:**
 ```bash
 # Check API health
 curl http://localhost:3000/health
@@ -836,11 +904,190 @@ sudo journalctl -u finbert-api -n 50
 RUST_LOG=debug cargo run
 ```
 
+**PyTorch linking errors (ARM64/Raspberry Pi):**
+If you see linking errors:
+```bash
+# Clean build cache
+cargo clean
+rm -rf target/release/build/torch-sys-*
+
+# Set environment variables
+export LIBTORCH="$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/lib/')"
+export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
+
+# Build with correct environment
+cargo build --release
+```
+
+## ⚙️ Environment Variables
+
+### Required
+```bash
+APCA_API_KEY_ID=your_alpaca_api_key
+APCA_API_SECRET_KEY=your_alpaca_secret_key
+```
+
+### Optional
+```bash
+APCA_BASE_URL=https://paper-api.alpaca.markets
+SERVER_HOST=127.0.0.1                    # Use 0.0.0.0 for external access
+SERVER_PORT=3000
+SENTIMENT_MODEL_PATH=finbert-onnx
+MAX_CONCURRENT_REQUESTS=10               # Reduce to 5 for Raspberry Pi
+REQUEST_TIMEOUT_SECS=30
+MAX_TEXT_LENGTH=10000
+RUST_LOG=finbert_rs=info
+```
+
+## 🚀 Trading Bot Integration
+
+### Python Example
+```python
+import requests
+import json
+from typing import Dict, List
+from dataclasses import dataclass
+
+@dataclass
+class TradingSignal:
+    symbol: str
+    signal_type: str  # "BUY_CALL", "BUY_PUT", "SELL_CALL", "SELL_PUT"
+    confidence: float
+    expected_return: float
+    max_loss: float
+    entry_price: float
+    kelly_fraction: float
+
+class FinBERTTradingBot:
+    def __init__(self, api_url: str = "http://127.0.0.1:3000"):
+        self.api_url = api_url
+        self.session = requests.Session()
+        
+    def get_trading_signals(self) -> Dict:
+        try:
+            response = self.session.get(f"{self.api_url}/analyze", timeout=60)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"API request failed: {e}")
+            return None
+    
+    def filter_high_confidence_signals(self, signals: List[TradingSignal], 
+                                     min_confidence: float = 0.8,
+                                     max_risk: float = 0.4) -> List[TradingSignal]:
+        return [
+            signal for signal in signals
+            if signal.confidence >= min_confidence and signal.risk_score <= max_risk
+        ]
+    
+    def calculate_position_size(self, signal: TradingSignal, 
+                              portfolio_value: float,
+                              max_risk_per_trade: float = 0.02) -> float:
+        # Use Kelly fraction for optimal sizing
+        kelly_size = signal.kelly_fraction * portfolio_value
+        
+        # Apply risk management constraints
+        max_loss_amount = portfolio_value * max_risk_per_trade
+        max_position = max_loss_amount / signal.max_loss if signal.max_loss > 0 else 0
+        
+        return min(kelly_size, max_position)
+
+# Usage
+bot = FinBERTTradingBot()
+analysis = bot.get_trading_signals()
+if analysis:
+    signals = analysis["trading_signals"]
+    high_confidence = bot.filter_high_confidence_signals(signals)
+    print(f"Found {len(high_confidence)} high-confidence signals")
+```
+
+### JavaScript/Node.js Example
+```javascript
+const axios = require('axios');
+
+class FinBERTTradingBot {
+    constructor(apiUrl = 'http://127.0.0.1:3000') {
+        this.apiUrl = apiUrl;
+        this.client = axios.create({ timeout: 60000 });
+    }
+
+    async getTradingSignals() {
+        try {
+            const response = await this.client.get(`${this.apiUrl}/analyze`);
+            return response.data;
+        } catch (error) {
+            console.error('API request failed:', error.message);
+            return null;
+        }
+    }
+
+    filterSignals(signals, minConfidence = 0.8, maxRisk = 0.4) {
+        return signals.filter(signal => 
+            signal.confidence >= minConfidence && signal.risk_score <= maxRisk
+        );
+    }
+}
+
+// Usage
+const bot = new FinBERTTradingBot();
+bot.getTradingSignals().then(analysis => {
+    if (analysis) {
+        const highConfidence = bot.filterSignals(analysis.trading_signals);
+        console.log(`Found ${highConfidence.length} high-confidence signals`);
+    }
+});
+```
+
+## 🔧 Development
+
+### Building from Source
+```bash
+git clone https://github.com/your-repo/finbert-rs
+cd finbert-rs
+cargo build --release
+```
+
+### Running Tests
+```bash
+cargo test
+```
+
+### Code Quality
+```bash
+# Check code quality
+cargo clippy
+
+# Format code
+cargo fmt
+
+# Security audit
+cargo audit
+```
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature-name`
+3. Make your changes
+4. Run tests: `cargo test`
+5. Run clippy: `cargo clippy`
+6. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## ⚠️ Disclaimer
+
+**IMPORTANT:** This software is for educational and research purposes only. Trading involves substantial risk of loss and is not suitable for all investors. Past performance does not guarantee future results. Always consult with a financial advisor before making investment decisions.
+
+The sentiment analysis and trading signals provided by this API should not be considered as investment advice. Users are responsible for their own trading decisions and any resulting losses.
+
 ## 🆘 Support
 
 - **Issues**: Create an issue on GitHub
-- **Documentation**: Check this README and inline code comments
-- **Community**: Join our Discord/Telegram for discussions
+- **Documentation**: Check this README and inline code comments  
+- **Updates**: Star the repository to get notified of updates
 
 ---
 
