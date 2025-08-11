@@ -135,10 +135,11 @@ install_pytorch() {
         # Try to install the preferred version first (2.8.0 - required by tch-rs)
         if pip install "torch==$PYTORCH_VERSION" "torchvision==0.23.0" "torchaudio==$PYTORCH_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
             local new_version=$(python3 -c "import torch; print(torch.__version__)")
-            if [[ "$new_version" == "$PYTORCH_VERSION" ]]; then
-                print_success "PyTorch $PYTORCH_VERSION installed successfully (compatible with tch-rs)"
+            # Check if version starts with the expected version (handles +cpu suffix)
+            if [[ "$new_version" == "$PYTORCH_VERSION"* ]]; then
+                print_success "PyTorch $new_version installed successfully (compatible with tch-rs)"
             else
-                print_error "Failed to install PyTorch $PYTORCH_VERSION"
+                print_error "Failed to install PyTorch $PYTORCH_VERSION, got $new_version"
                 exit 1
             fi
         else
