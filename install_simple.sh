@@ -27,7 +27,34 @@ print_success "Using current virtual environment: $VIRTUAL_ENV"
 
 # Install compatible PyTorch version
 print_status "Installing compatible PyTorch for Raspberry Pi..."
-pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+
+# Check if PyTorch 2.1.0 is already installed
+CURRENT_TORCH=$(python -c "import torch; print(torch.__version__)" 2>/dev/null || echo "none")
+if [[ "$CURRENT_TORCH" == "2.1.0"* ]]; then
+    print_success "PyTorch 2.1.0 already installed: $CURRENT_TORCH"
+else
+    print_status "Current PyTorch version: $CURRENT_TORCH"
+    print_status "Installing PyTorch 2.1.0..."
+    
+    # Try different pip install methods
+    if pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu 2>/dev/null; then
+        print_success "PyTorch installed successfully"
+    elif pip install --force-reinstall torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu 2>/dev/null; then
+        print_success "PyTorch force-reinstalled successfully"
+    elif python -m pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu 2>/dev/null; then
+        print_success "PyTorch installed via python -m pip"
+    else
+        print_status "Standard pip install failed, checking current PyTorch installation..."
+        TORCH_VERSION=$(python -c "import torch; print(torch.__version__)" 2>/dev/null || echo "none")
+        if [[ "$TORCH_VERSION" != "none" ]]; then
+            print_status "Found PyTorch $TORCH_VERSION, will attempt to use it"
+        else
+            print_error "Could not install PyTorch. Please run manually:"
+            echo "pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu"
+            exit 1
+        fi
+    fi
+fi
 
 # Source Rust environment
 print_status "Setting up Rust environment..."
