@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Set proper PATH to include standard locations
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -45,12 +48,13 @@ check_requirements() {
     print_step "Checking system requirements..."
     
     # Check if running on ARM64
-    if [[ "$(uname -m)" != "aarch64" ]]; then
-        print_warning "This script is optimized for ARM64 (Raspberry Pi). You're running on $(uname -m)"
+    local arch_info="$(uname -m 2>/dev/null || echo "unknown")"
+    if [[ "$arch_info" != "aarch64" ]]; then
+        print_warning "This script is optimized for ARM64 (Raspberry Pi). You're running on $arch_info"
     fi
     
     # Check for required system packages on Raspberry Pi
-    if [[ "$(uname -m)" == "aarch64" ]]; then
+    if [[ "$arch_info" == "aarch64" ]]; then
         print_status "Checking required system packages for Raspberry Pi..."
         missing_packages=()
         
@@ -82,9 +86,20 @@ check_requirements() {
     
     # Check Rust
     if ! command_exists cargo; then
-        print_error "Rust/Cargo not found. Please install Rust first:"
-        echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-        exit 1
+        print_status "Attempting to source Rust environment..."
+        if [[ -f "$HOME/.cargo/env" ]]; then
+            source "$HOME/.cargo/env"
+            export PATH="$HOME/.cargo/bin:$PATH"
+        fi
+        
+        if ! command_exists cargo; then
+            print_error "Rust/Cargo not found. Please install Rust first:"
+            echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+            echo "Then run: source ~/.cargo/env"
+            exit 1
+        else
+            print_success "Rust environment loaded successfully"
+        fi
     fi
     
     # Check Python
@@ -135,12 +150,13 @@ setup_python_env() {
     pip install --upgrade pip
     
     # Install PyTorch based on architecture
-    if [[ "$(uname -m)" == "aarch64" ]]; then
+    local arch_info="$(uname -m 2>/dev/null || echo "unknown")"
+    if [[ "$arch_info" == "aarch64" ]]; then
         print_status "Installing compatible PyTorch for ARM64 (Raspberry Pi)..."
         # Use PyTorch 2.1.0 which is compatible with torch-sys 0.17.0
         pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu
     else
-        print_status "Installing compatible PyTorch for $(uname -m)..."
+        print_status "Installing compatible PyTorch for $arch_info..."
         pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu
     fi
     
@@ -167,14 +183,18 @@ clean_pytorch() {
     # Remove existing virtual environment
     if [[ -d "$VENV_PATH" ]]; then
         print_status "Removing existing virtual environment"
-        rm -rf "$VENV_PATH"
+        /bin/rm -rf "$VENV_PATH" 2>/dev/null || true
     fi
     
     # Clean cargo cache
     print_status "Cleaning cargo cache"
-    cargo clean
-    rm -rf target/
-    rm -rf ~/.cargo/registry/cache/*/torch-sys*
+    if command_exists cargo; then
+        cargo clean 2>/dev/null || true
+        /bin/rm -rf target/ 2>/dev/null || true
+        /bin/rm -rf ~/.cargo/registry/cache/*/torch-sys* 2>/dev/null || true
+    else
+        print_warning "Cargo not found in PATH, skipping cargo clean"
+    fi
     
     print_success "Cleanup completed"
 }
@@ -230,12 +250,14 @@ build_project() {
             fi
         else
             # Limit concurrent jobs on ARM64 to prevent memory issues
-            if [[ "$(uname -m)" == "aarch64" ]]; then
+            local arch_info="$(uname -m 2>/dev/null || echo "unknown")"
+            if [[ "$arch_info" == "aarch64" ]]; then
                 export CARGO_BUILD_JOBS=2
                 print_status "Using 2 cores for ARM64 build (${mem_gb}GB available)"
             else
-                export CARGO_BUILD_JOBS=$(nproc)
-                print_status "Using $(nproc) cores for build (${mem_gb}GB available)"
+                local cpu_count="$(nproc 2>/dev/null || echo "4")"
+                export CARGO_BUILD_JOBS="$cpu_count"
+                print_status "Using $cpu_count cores for build (${mem_gb}GB available)"
             fi
         fi
     else
@@ -247,6 +269,13 @@ build_project() {
     
     # Setup PyTorch environment
     setup_pytorch_environment
+    
+    # Check if cargo is available
+    if ! command_exists cargo; then
+        print_error "Cargo not found. Please ensure Rust is properly installed and in PATH."
+        print_status "Try running: source ~/.cargo/env"
+        exit 1
+    fi
     
     if cargo build --release; then
         print_success "Build completed successfully!"
@@ -269,15 +298,16 @@ setup_pytorch_environment() {
     fi
     
     # Set environment variables
-    export LIBTORCH="$(echo "$torch_path" | sed 's/__init__.py/lib/')"
+    export LIBTORCH="$(echo "$torch_path" | /bin/sed 's/__init__.py/lib/' 2>/dev/null || echo "$torch_path/../lib")"
     export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
-    export LIBTORCH_INCLUDE="$(echo "$torch_path" | sed 's/__init__.py//')"
+    export LIBTORCH_INCLUDE="$(echo "$torch_path" | /bin/sed 's/__init__.py//' 2>/dev/null || echo "$torch_path/..")"
     export LIBTORCH_USE_PYTORCH=1
     export LIBTORCH_BYPASS_VERSION_CHECK=1
     export LIBTORCH_STATIC=0
     
     # Set C++ ABI compatibility for ARM64/Raspberry Pi
-    if [[ "$(uname -m)" == "aarch64" ]]; then
+    local arch_info="$(uname -m 2>/dev/null || echo "unknown")"
+    if [[ "$arch_info" == "aarch64" ]]; then
         export LIBTORCH_CXX11_ABI=1  # Use new C++11 ABI for ARM64
         export TORCH_CUDA_VERSION=none  # Disable CUDA for CPU-only build
         export CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu  # Explicit target for ARM64
