@@ -46,11 +46,15 @@ impl OnnxSentimentModel {
             ));
         }
 
-        // Create optimized ONNX Runtime session
+        // Validate model file integrity
+        Self::validate_model_file(&model_file)?;
+
+        // Create optimized ONNX Runtime session with error handling
         let session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(num_cpus::get().min(8))?
-            .commit_from_file(&model_file)?;
+            .with_optimization_level(GraphOptimizationLevel::Level1)? // Reduce optimization for compatibility
+            .with_intra_threads(num_cpus::get().min(4))? // Reduce threads for Pi
+            .commit_from_file(&model_file)
+            .map_err(|e| anyhow::anyhow!("Failed to load ONNX model: {}. The model may be corrupted or incompatible with this ONNX Runtime version. Try re-downloading the model.", e))?;
 
         // Load tokenizer
         let tokenizer = Tokenizer::from_file(&tokenizer_file)
@@ -60,6 +64,38 @@ impl OnnxSentimentModel {
             session,
             tokenizer,
         })
+    }
+    
+    fn validate_model_file(model_file: &Path) -> Result<()> {
+        use std::fs::File;
+        use std::io::Read;
+        
+        let mut file = File::open(model_file)
+            .map_err(|e| anyhow::anyhow!("Cannot open model file: {}", e))?;
+        
+        let file_size = file.metadata()
+            .map_err(|e| anyhow::anyhow!("Cannot get model file metadata: {}", e))?
+            .len();
+        
+        if file_size < 1000 {
+            return Err(anyhow::anyhow!("Model file is too small ({} bytes), likely corrupted", file_size));
+        }
+        
+        // Check ONNX magic header
+        let mut header = [0u8; 8];
+        file.read_exact(&mut header)
+            .map_err(|e| anyhow::anyhow!("Cannot read model file header: {}", e))?;
+        
+        // ONNX files should start with protobuf encoding
+        if header[0] != 0x08 {
+            return Err(anyhow::anyhow!(
+                "Invalid ONNX model file format. Expected protobuf header, got: {:02x?}", 
+                &header[..4]
+            ));
+        }
+        
+        tracing::info!("Model file validation passed: {} bytes", file_size);
+        Ok(())
     }
     
     fn resolve_model_path(model_path: &str) -> Result<PathBuf> {
