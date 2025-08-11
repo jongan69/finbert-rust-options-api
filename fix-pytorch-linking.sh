@@ -1,10 +1,5 @@
 #!/bin/bash
 
-# Fix PyTorch linking for ARM64/Raspberry Pi
-# This script resolves the "skipping incompatible" linking errors
-
-set -e
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -12,79 +7,49 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-print_status() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
+echo -e "${BLUE}[INFO]${NC} 🔧 Fixing PyTorch linking for ARM64..."
 
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-print_status "🔧 Fixing PyTorch linking for ARM64..."
-
-# Check if virtual environment exists
-if [[ ! -d "$HOME/pytorch-venv" ]]; then
-    print_error "PyTorch virtual environment not found at $HOME/pytorch-venv"
-    print_error "Please run ./fix-pytorch-pi.sh first"
-    exit 1
-fi
-
-# Clean build cache completely
-print_status "🧹 Cleaning build cache..."
+# Step 1: Clean build cache
+echo -e "${BLUE}[INFO]${NC} 🧹 Cleaning build cache..."
 cargo clean
-rm -rf target/release/build/torch-sys-* 2>/dev/null || true
-rm -rf ~/.cargo/registry/cache/*/torch-sys* 2>/dev/null || true
+rm -rf target/release/build/torch-sys-*
+rm -rf ~/.cargo/registry/cache/*/torch-sys*
 
-# Activate virtual environment
-print_status "🔌 Activating virtual environment..."
+# Step 2: Activate virtual environment
+echo -e "${BLUE}[INFO]${NC} 🔌 Activating virtual environment..."
 source ~/pytorch-venv/bin/activate
 
-# Set environment variables correctly
-print_status "⚙️ Setting environment variables..."
+# Step 3: Set environment variables
+echo -e "${BLUE}[INFO]${NC} ⚙️ Setting environment variables..."
+
+# Set LIBTORCH to the lib directory
 export LIBTORCH="$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/lib/')"
+echo -e "${BLUE}[INFO]${NC} 📁 LIBTORCH: $LIBTORCH"
+
+# Set LD_LIBRARY_PATH
 export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
+echo -e "${BLUE}[INFO]${NC} 🔗 LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
 
-print_status "📁 LIBTORCH: $LIBTORCH"
-print_status "🔗 LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+# Set the correct include path for headers
+export LIBTORCH_INCLUDE="$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/include/')"
+echo -e "${BLUE}[INFO]${NC} 📁 LIBTORCH_INCLUDE: $LIBTORCH_INCLUDE"
 
-# Verify ARM64 libraries
-print_status "🔍 Checking library architecture..."
-if [[ -d "$LIBTORCH" ]]; then
-    for lib in "$LIBTORCH"/libtorch*.so; do
-        if [[ -f "$lib" ]]; then
-            arch=$(file "$lib" | grep -o "ARM aarch64\|x86-64\|ELF 64-bit")
-            if [[ "$arch" == "ARM aarch64" ]]; then
-                print_success "$(basename "$lib"): $arch"
-            else
-                print_warning "$(basename "$lib"): $arch (may cause issues)"
-            fi
-        fi
-    done
-else
-    print_error "PyTorch lib directory not found: $LIBTORCH"
-    exit 1
+# Step 4: Check library architecture
+echo -e "${BLUE}[INFO]${NC} 🔍 Checking library architecture..."
+for lib in "$LIBTORCH"/lib*.so; do
+    if [[ -f "$lib" ]]; then
+        arch=$(file "$lib" | grep -o "ELF [0-9]*-bit")
+        echo -e "${YELLOW}[WARNING]${NC} $(basename "$lib"): $arch"
+    fi
+done
+
+# Step 5: Check for conflicting x86_64 libraries
+echo -e "${BLUE}[INFO]${NC} 🔍 Checking for conflicting x86_64 libraries..."
+if find /usr/lib -name "libtorch*.so" 2>/dev/null | grep -q .; then
+    echo -e "${YELLOW}[WARNING]${NC} Found system PyTorch libraries that may conflict"
+    find /usr/lib -name "libtorch*.so" 2>/dev/null
 fi
 
-# Check for conflicting x86_64 libraries
-print_status "🔍 Checking for conflicting x86_64 libraries..."
-conflicting_libs=$(find /usr -name "libtorch*.so" 2>/dev/null | head -5)
-if [[ -n "$conflicting_libs" ]]; then
-    print_warning "Found potentially conflicting system libraries:"
-    echo "$conflicting_libs"
-    print_warning "Make sure your virtual environment libraries are used"
-fi
-
-# Build with correct environment
-print_status "⚡️ Building with ARM64 PyTorch..."
+# Step 6: Build with correct environment
+echo -e "${BLUE}[INFO]${NC} ⚡️ Building with ARM64 PyTorch..."
 cargo build --release
-
-print_success "Build completed successfully!"
-print_status "You can now run: cargo run"
