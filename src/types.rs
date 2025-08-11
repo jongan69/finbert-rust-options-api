@@ -120,6 +120,13 @@ pub struct ExecutionMetadata {
 
 
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopOption {
+    pub symbol: String,
+    pub score: f64,
+    pub indicators: Vec<String>,
+}
+
 // Financial Metrics Structures
 #[derive(Debug, Clone, Serialize)]
 pub struct MetricsResult {
