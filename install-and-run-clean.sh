@@ -13,7 +13,6 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="finbert-rs"
 VENV_PATH="$HOME/pytorch-venv"
-RUST_BERT_VERSION="0.23.0"
 
 # Function to print colored output
 print_status() {
@@ -107,6 +106,33 @@ setup_python_env() {
     print_success "Python environment ready"
 }
 
+# Function to clean existing PyTorch installation
+clean_pytorch() {
+    print_step "Cleaning existing PyTorch installation..."
+    
+    print_warning "Removing existing PyTorch installation to ensure clean build"
+    
+    # Deactivate virtual environment if active
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        print_status "Deactivating virtual environment"
+        deactivate
+    fi
+    
+    # Remove existing virtual environment
+    if [[ -d "$VENV_PATH" ]]; then
+        print_status "Removing existing virtual environment"
+        rm -rf "$VENV_PATH"
+    fi
+    
+    # Clean cargo cache
+    print_status "Cleaning cargo cache"
+    cargo clean
+    rm -rf target/
+    rm -rf ~/.cargo/registry/cache/*/torch-sys*
+    
+    print_success "Cleanup completed"
+}
+
 # Function to setup environment file
 setup_env_file() {
     print_step "Setting up environment configuration..."
@@ -141,20 +167,9 @@ download_finbert_model() {
     fi
 }
 
-# Function to clean build cache
-clean_build_cache() {
-    print_step "Cleaning build cache..."
-    
-    cargo clean
-    rm -rf target/release/build/torch-sys-*
-    rm -rf ~/.cargo/registry/cache/*/torch-sys*
-    
-    print_success "Build cache cleaned"
-}
-
 # Function to build the project
 build_project() {
-    print_step "Building FinBERT Rust application with download-libtorch feature..."
+    print_step "Building FinBERT Rust application with clean download-libtorch approach..."
     
     # Set build jobs based on available memory
     if command_exists free; then
@@ -174,7 +189,7 @@ build_project() {
     print_status "Building with release profile and download-libtorch feature..."
     print_status "This will automatically download the correct PyTorch version"
     
-    # Clear any existing PyTorch environment variables that might interfere
+    # Ensure no PyTorch environment variables are set
     unset LIBTORCH
     unset LIBTORCH_INCLUDE
     unset LIBTORCH_LIB
@@ -184,48 +199,15 @@ build_project() {
     unset LIBTORCH_BYPASS_VERSION_CHECK
     unset LD_LIBRARY_PATH
     
-    print_status "Cleared existing PyTorch environment variables to ensure clean build"
+    print_status "Ensured clean environment for download-libtorch feature"
     
     if cargo build --release; then
         print_success "Build completed successfully!"
-        print_success "✅ No version compatibility issues with download-libtorch feature"
+        print_success "✅ Clean build with download-libtorch feature completed"
     else
         print_error "Build failed. Check the error messages above."
-        print_warning "Trying fallback approach with manual PyTorch setup..."
-        
-        # Fallback: try with manual PyTorch setup
-        print_status "Attempting fallback with manual PyTorch environment setup..."
-        setup_pytorch_environment
-        if cargo build --release; then
-            print_success "Build completed successfully with fallback approach!"
-        else
-            print_error "Both approaches failed. Please check the error messages above."
-            exit 1
-        fi
-    fi
-}
-
-# Function to setup PyTorch environment (fallback)
-setup_pytorch_environment() {
-    print_status "Setting up PyTorch environment for fallback approach..."
-    
-    # Get PyTorch path
-    local torch_path=$(python3 -c "import torch; print(torch.__file__)" 2>/dev/null)
-    if [[ -z "$torch_path" ]]; then
-        print_error "PyTorch not found. Please ensure PyTorch is installed."
         exit 1
     fi
-    
-    # Set environment variables
-    export LIBTORCH="$(echo "$torch_path" | sed 's/__init__.py/lib/')"
-    export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
-    export LIBTORCH_INCLUDE="$(echo "$torch_path" | sed 's/__init__.py//')"
-    export LIBTORCH_USE_PYTORCH=1
-    export LIBTORCH_CXX11_ABI=0
-    export LIBTORCH_STATIC=0
-    export LIBTORCH_BYPASS_VERSION_CHECK=1
-    
-    print_status "PyTorch environment variables set for fallback approach"
 }
 
 # Function to run the application
@@ -256,16 +238,16 @@ show_usage() {
     echo "  --setup-only     Only setup environment, don't run"
     echo "  --build-only     Only build the project, don't run"
     echo "  --run-only       Only run the application (assumes setup is complete)"
-    echo "  --clean          Clean build cache before building"
     echo "  --help           Show this help message"
     echo ""
     echo "Features:"
+    echo "  ✅ Clean installation - removes existing PyTorch"
     echo "  ✅ Uses download-libtorch feature for automatic PyTorch compatibility"
     echo "  ✅ No manual PyTorch installation required"
-    echo "  ✅ Eliminates version compatibility issues"
+    echo "  ✅ Eliminates all version compatibility issues"
     echo ""
     echo "Examples:"
-    echo "  $0               # Full setup and run"
+    echo "  $0               # Full clean setup and run"
     echo "  $0 --setup-only  # Setup environment only"
     echo "  $0 --run-only    # Run existing build"
     echo ""
@@ -282,16 +264,15 @@ trap cleanup SIGINT SIGTERM
 
 # Main execution
 main() {
-    echo -e "${CYAN}🤖 FinBERT Rust Options API - Updated Install & Run Script${NC}"
-    echo -e "${CYAN}========================================================${NC}"
-    echo -e "${CYAN}Using download-libtorch feature for better compatibility${NC}"
+    echo -e "${CYAN}🤖 FinBERT Rust Options API - Clean Install & Run Script${NC}"
+    echo -e "${CYAN}=====================================================${NC}"
+    echo -e "${CYAN}Clean installation with download-libtorch feature${NC}"
     echo ""
     
     # Parse command line arguments
     SETUP_ONLY=false
     BUILD_ONLY=false
     RUN_ONLY=false
-    CLEAN_BUILD=false
     
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -305,10 +286,6 @@ main() {
                 ;;
             --run-only)
                 RUN_ONLY=true
-                shift
-                ;;
-            --clean)
-                CLEAN_BUILD=true
                 shift
                 ;;
             --help)
@@ -332,16 +309,15 @@ main() {
     elif [[ "$BUILD_ONLY" == true ]]; then
         print_step "Build-only mode selected"
         check_requirements
+        clean_pytorch
         setup_python_env
         setup_env_file
         download_finbert_model
-        if [[ "$CLEAN_BUILD" == true ]]; then
-            clean_build_cache
-        fi
         build_project
     elif [[ "$SETUP_ONLY" == true ]]; then
         print_step "Setup-only mode selected"
         check_requirements
+        clean_pytorch
         setup_python_env
         setup_env_file
         download_finbert_model
@@ -353,14 +329,12 @@ main() {
         print_status "3. Run: $0 --run-only"
     else
         # Full setup and run
-        print_step "Full setup and run mode"
+        print_step "Full clean setup and run mode"
         check_requirements
+        clean_pytorch
         setup_python_env
         setup_env_file
         download_finbert_model
-        if [[ "$CLEAN_BUILD" == true ]]; then
-            clean_build_cache
-        fi
         build_project
         run_application
     fi
