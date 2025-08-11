@@ -118,32 +118,7 @@ pub struct ExecutionMetadata {
     pub cache_hit_rate: f64,
 }
 
-// Legacy structures for backward compatibility
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiResponse {
-    pub news_analysis: Vec<SentimentAnalysis>,
-    pub unique_symbols: Vec<String>,
-    pub options_analysis: Vec<SymbolOptionsAnalysis>,
-    pub summary: SummaryStats,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SummaryStats {
-    pub total_headlines: usize,
-    pub total_symbols: usize,
-    pub positive_sentiment_count: usize,
-    pub negative_sentiment_count: usize,
-    pub top_scoring_options: Vec<TopOption>,
-    pub filtered_crypto_symbols: Vec<String>,
-    pub crypto_symbols_count: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TopOption {
-    pub symbol: String,
-    pub score: f64,
-    pub indicators: Vec<String>,
-}
 
 // Financial Metrics Structures
 #[derive(Debug, Clone, Serialize)]

@@ -1,8 +1,5 @@
 # 🤖 FinBERT Rust Options API
 
-Requiries Finbert in th project root:
-`git clone https://huggingface.co/ProsusAI/finbert`
-
 A production-ready Rust API that performs real-time sentiment analysis on financial news headlines and generates actionable trading signals for options trading. This API combines the power of FinBERT (Financial BERT) with Alpaca Markets data to provide institutional-grade trading intelligence.
 
 ## 🎯 Overview
@@ -25,7 +22,7 @@ This API analyzes financial news sentiment, filters out crypto assets, and gener
 - Alpaca Markets API credentials
 - 4GB+ RAM (for FinBERT model loading)
 
-### Option 1: Updated Approach (Recommended) ⭐
+### Option 1: Recommended Installation ⭐
 Uses automatic PyTorch compatibility - no manual setup required!
 
 ```bash
@@ -33,8 +30,8 @@ Uses automatic PyTorch compatibility - no manual setup required!
 git clone <repository-url>
 cd finbert-rs
 
-# Run the updated installation script
-./install-and-run-updated.sh
+# Run the installation script
+./install.sh
 ```
 
 ### Option 2: Original Approach
@@ -69,8 +66,6 @@ cargo run
 ```
 
 The API will be available at `http://127.0.0.1:3000`
-
-**📖 See [UPDATED_APPROACH.md](UPDATED_APPROACH.md) for detailed comparison and benefits.**
 
 ## 📊 API Endpoints
 
