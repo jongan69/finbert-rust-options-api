@@ -19,7 +19,25 @@ rm -rf ~/.cargo/registry/cache/*/torch-sys*
 echo -e "${BLUE}[INFO]${NC} 🔌 Activating virtual environment..."
 source ~/pytorch-venv/bin/activate
 
-# Step 3: Set environment variables
+# Step 3: Check PyTorch version and try to fix compatibility
+echo -e "${BLUE}[INFO]${NC} 🔍 Checking PyTorch version compatibility..."
+PYTORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)")
+echo -e "${BLUE}[DEBUG]${NC} Current PyTorch version: $PYTORCH_VERSION"
+
+# Check if we need to downgrade PyTorch for compatibility
+if [[ "$PYTORCH_VERSION" == "2.8.0"* ]]; then
+    echo -e "${YELLOW}[WARNING]${NC} PyTorch 2.8.0 may have API compatibility issues with torch-sys 0.17.0"
+    echo -e "${BLUE}[INFO]${NC} Attempting to install PyTorch 2.1.0 for better compatibility..."
+    
+    pip uninstall torch torchvision torchaudio -y
+    pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+    
+    # Verify the downgrade
+    NEW_VERSION=$(python3 -c "import torch; print(torch.__version__)")
+    echo -e "${BLUE}[DEBUG]${NC} New PyTorch version: $NEW_VERSION"
+fi
+
+# Step 4: Set environment variables
 echo -e "${BLUE}[INFO]${NC} ⚙️ Setting environment variables..."
 
 # Debug: Show Python torch path
@@ -56,7 +74,7 @@ echo -e "${BLUE}[DEBUG]${NC}   LIBTORCH_LIB: ${LIBTORCH_LIB:-'not set'}"
 echo -e "${BLUE}[DEBUG]${NC}   LIBTORCH_CXX11_ABI: ${LIBTORCH_CXX11_ABI:-'not set'}"
 echo -e "${BLUE}[DEBUG]${NC}   LIBTORCH_STATIC: ${LIBTORCH_STATIC:-'not set'}"
 
-# Step 4: Check library architecture
+# Step 5: Check library architecture
 echo -e "${BLUE}[INFO]${NC} 🔍 Checking library architecture..."
 for lib in "$LIBTORCH"/lib*.so; do
     if [[ -f "$lib" ]]; then
@@ -65,14 +83,14 @@ for lib in "$LIBTORCH"/lib*.so; do
     fi
 done
 
-# Step 5: Check for conflicting x86_64 libraries
+# Step 6: Check for conflicting x86_64 libraries
 echo -e "${BLUE}[INFO]${NC} 🔍 Checking for conflicting x86_64 libraries..."
 if find /usr/lib -name "libtorch*.so" 2>/dev/null | grep -q .; then
     echo -e "${YELLOW}[WARNING]${NC} Found system PyTorch libraries that may conflict"
     find /usr/lib -name "libtorch*.so" 2>/dev/null
 fi
 
-# Step 6: Build with correct environment
+# Step 7: Build with correct environment
 echo -e "${BLUE}[INFO]${NC} ⚡️ Building with ARM64 PyTorch..."
 echo -e "${BLUE}[DEBUG]${NC} Running: cargo build --release"
 cargo build --release
