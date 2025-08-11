@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Set proper PATH to include standard locations
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
+# Preserve existing PATH and add standard locations
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:${PATH}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -171,13 +171,29 @@ check_requirements() {
 setup_python_env() {
     print_step "Setting up Python virtual environment..."
     
-    if [[ ! -d "$VENV_PATH" ]]; then
-        print_status "Creating virtual environment at $VENV_PATH"
-        python3 -m venv "$VENV_PATH"
+    # Check if we're already in the target virtual environment
+    if [[ -n "$VIRTUAL_ENV" && "$VIRTUAL_ENV" == "$VENV_PATH" ]]; then
+        print_status "Already in target virtual environment: $VENV_PATH"
+    else
+        if [[ ! -d "$VENV_PATH" ]]; then
+            print_status "Creating virtual environment at $VENV_PATH"
+            # Find python3 command
+            local python_cmd
+            if command_exists python3; then
+                python_cmd="python3"
+            elif command_exists python; then
+                python_cmd="python"
+            else
+                print_error "Python not found. Please ensure Python 3.8+ is installed."
+                exit 1
+            fi
+            
+            "$python_cmd" -m venv "$VENV_PATH"
+        fi
+        
+        print_status "Activating virtual environment..."
+        source "$VENV_PATH/bin/activate"
     fi
-    
-    print_status "Activating virtual environment..."
-    source "$VENV_PATH/bin/activate"
     
     # Upgrade pip
     pip install --upgrade pip
@@ -202,21 +218,30 @@ clean_pytorch() {
     
     print_warning "Removing existing PyTorch installation to ensure clean build"
     
-    # Deactivate virtual environment if active
-    if [[ -n "$VIRTUAL_ENV" ]]; then
-        print_status "Deactivating virtual environment"
-        if command_exists deactivate; then
-            deactivate
-        else
-            unset VIRTUAL_ENV
-            export PATH="${PATH//$VIRTUAL_ENV\/bin:/}"
+    # Check if we're currently in the target virtual environment
+    local should_clean_venv=true
+    if [[ -n "$VIRTUAL_ENV" && "$VIRTUAL_ENV" == "$VENV_PATH" ]]; then
+        print_status "Currently in target virtual environment, will clean PyTorch packages only"
+        should_clean_venv=false
+        # Clean PyTorch packages from current environment
+        pip uninstall -y torch torchvision torchaudio 2>/dev/null || true
+    else
+        # Deactivate virtual environment if active and different from target
+        if [[ -n "$VIRTUAL_ENV" ]]; then
+            print_status "Deactivating virtual environment"
+            if command_exists deactivate; then
+                deactivate
+            else
+                unset VIRTUAL_ENV
+                export PATH="${PATH//$VIRTUAL_ENV\/bin:/}"
+            fi
         fi
-    fi
-    
-    # Remove existing virtual environment
-    if [[ -d "$VENV_PATH" ]]; then
-        print_status "Removing existing virtual environment"
-        /bin/rm -rf "$VENV_PATH" 2>/dev/null || true
+        
+        # Remove existing virtual environment
+        if [[ -d "$VENV_PATH" ]]; then
+            print_status "Removing existing virtual environment"
+            /bin/rm -rf "$VENV_PATH" 2>/dev/null || true
+        fi
     fi
     
     # Clean cargo cache
