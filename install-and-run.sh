@@ -13,8 +13,9 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="finbert-rs"
 VENV_PATH="$HOME/pytorch-venv"
-PYTORCH_VERSION="2.1.2"
-PYTORCH_FALLBACK_VERSION="2.2.0"
+PYTORCH_VERSION="2.8.0"
+PYTORCH_FALLBACK_VERSION="2.7.0"
+PYTORCH_LEGACY_VERSION="2.6.0"
 RUST_BERT_VERSION="0.23.0"
 
 # Function to print colored output
@@ -131,25 +132,32 @@ install_pytorch() {
         print_status "Installing PyTorch $PYTORCH_VERSION for torch-sys compatibility..."
         pip uninstall torch torchvision torchaudio -y 2>/dev/null || true
         
-        # Try to install the preferred version first
-        if pip install "torch==$PYTORCH_VERSION" "torchvision==0.16.2" "torchaudio==$PYTORCH_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
+        # Try to install the preferred version first (2.8.0 - required by tch-rs)
+        if pip install "torch==$PYTORCH_VERSION" "torchvision==0.23.0" "torchaudio==$PYTORCH_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
             local new_version=$(python3 -c "import torch; print(torch.__version__)")
             if [[ "$new_version" == "$PYTORCH_VERSION" ]]; then
-                print_success "PyTorch $PYTORCH_VERSION installed successfully"
+                print_success "PyTorch $PYTORCH_VERSION installed successfully (compatible with tch-rs)"
             else
                 print_error "Failed to install PyTorch $PYTORCH_VERSION"
                 exit 1
             fi
         else
             print_warning "PyTorch $PYTORCH_VERSION not available, trying fallback version $PYTORCH_FALLBACK_VERSION..."
-            if pip install "torch==$PYTORCH_FALLBACK_VERSION" "torchvision==0.17.0" "torchaudio==$PYTORCH_FALLBACK_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
+            if pip install "torch==$PYTORCH_FALLBACK_VERSION" "torchvision==0.22.0" "torchaudio==$PYTORCH_FALLBACK_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
                 local new_version=$(python3 -c "import torch; print(torch.__version__)")
                 print_success "PyTorch $new_version installed successfully (fallback version)"
-                print_warning "This version may have compatibility issues with torch-sys 0.17.0"
+                print_warning "This version may have compatibility issues with tch-rs"
             else
-                print_error "Failed to install PyTorch. Please install manually:"
-                echo "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
-                exit 1
+                print_warning "PyTorch $PYTORCH_FALLBACK_VERSION not available, trying legacy version $PYTORCH_LEGACY_VERSION..."
+                if pip install "torch==$PYTORCH_LEGACY_VERSION" "torchvision==0.21.0" "torchaudio==$PYTORCH_LEGACY_VERSION" --index-url https://download.pytorch.org/whl/cpu; then
+                    local new_version=$(python3 -c "import torch; print(torch.__version__)")
+                    print_success "PyTorch $new_version installed successfully (legacy version)"
+                    print_warning "This version will require LIBTORCH_BYPASS_VERSION_CHECK=1"
+                else
+                    print_error "Failed to install PyTorch. Please install manually:"
+                    echo "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu"
+                    exit 1
+                fi
             fi
         fi
     else
@@ -182,9 +190,14 @@ setup_environment() {
         print_status "PyTorch version: $torch_version"
         
         # If we have a version mismatch, set bypass flag
-        if [[ "$torch_version" == "2.1."* ]] || [[ "$torch_version" == "2.2."* ]] || [[ "$torch_version" == "2.3."* ]]; then
-            print_warning "PyTorch version $torch_version may have compatibility issues with torch-sys 0.17.0"
+        if [[ "$torch_version" == "2.1."* ]] || [[ "$torch_version" == "2.2."* ]] || [[ "$torch_version" == "2.3."* ]] || [[ "$torch_version" == "2.4."* ]] || [[ "$torch_version" == "2.5."* ]] || [[ "$torch_version" == "2.6."* ]] || [[ "$torch_version" == "2.7."* ]]; then
+            print_warning "PyTorch version $torch_version may have compatibility issues with tch-rs (requires 2.8.0)"
             print_status "Setting LIBTORCH_BYPASS_VERSION_CHECK to bypass version check"
+            export LIBTORCH_BYPASS_VERSION_CHECK=1
+        elif [[ "$torch_version" == "2.8."* ]]; then
+            print_success "PyTorch version $torch_version is compatible with tch-rs"
+        else
+            print_warning "Unknown PyTorch version $torch_version, setting bypass flag for safety"
             export LIBTORCH_BYPASS_VERSION_CHECK=1
         fi
     fi

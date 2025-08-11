@@ -80,11 +80,13 @@ cargo build --release
 
 ## Version Compatibility Matrix
 
-| rust-bert | torch-sys | PyTorch Compatible Versions |
-|-----------|-----------|----------------------------|
-| 0.23.0    | 0.17.0    | 2.0.x - 2.1.x              |
-| 0.24.0    | 0.18.0    | 2.1.x - 2.2.x              |
-| 0.25.0    | 0.19.0    | 2.2.x - 2.8.x              |
+| rust-bert | tch-rs | PyTorch Compatible Versions |
+|-----------|--------|----------------------------|
+| 0.23.0    | 0.17.0 | 2.8.0 (with bypass flag for older) |
+| 0.24.0    | 0.18.0 | 2.8.0+                     |
+| 0.25.0    | 0.19.0 | 2.8.0+                     |
+
+**Note:** tch-rs officially requires PyTorch 2.8.0, but can work with older versions using `LIBTORCH_BYPASS_VERSION_CHECK=1`
 
 ## Common Issues & Fixes
 
@@ -112,6 +114,20 @@ file ~/pytorch-venv/lib/python3.*/site-packages/torch/lib/*.so
 # Increase swap space or reduce parallel jobs
 export CARGO_BUILD_JOBS=1
 cargo build --release
+```
+
+### Issue: "tch-rs expects PyTorch 2.8.0, got 2.1.2"
+```bash
+# Quick fix - bypass version check
+./fix-torch-sys-version.sh
+
+# Or manually:
+export LIBTORCH_BYPASS_VERSION_CHECK=1
+cargo clean
+cargo build --release
+
+# Or upgrade to PyTorch 2.8.0 (recommended):
+pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
 ```
 
 ## Performance Optimization
