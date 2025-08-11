@@ -15,7 +15,14 @@ NC='\033[0m' # No Color
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="finbert-rs"
-VENV_PATH="$HOME/pytorch-venv"
+
+# Set proper home directory - use actual user's home if running with sudo
+if [[ -n "$SUDO_USER" ]]; then
+    ACTUAL_HOME=$(eval echo "~$SUDO_USER")
+    VENV_PATH="$ACTUAL_HOME/pytorch-venv"
+else
+    VENV_PATH="$HOME/pytorch-venv"
+fi
 
 # Function to print colored output
 print_status() {
@@ -84,6 +91,25 @@ check_requirements() {
         fi
     fi
     
+    # Check if running as root and warn about Rust installation
+    if [[ "$EUID" -eq 0 ]]; then
+        print_warning "Running as root. Checking for Rust installation..."
+        # When running as sudo, check the actual user's Rust installation
+        local actual_user="${SUDO_USER:-$USER}"
+        local actual_home
+        if [[ -n "$SUDO_USER" ]]; then
+            actual_home=$(eval echo "~$SUDO_USER")
+        else
+            actual_home="$HOME"
+        fi
+        
+        if [[ -f "$actual_home/.cargo/env" ]]; then
+            print_status "Found Rust installation for user $actual_user"
+            source "$actual_home/.cargo/env"
+            export PATH="$actual_home/.cargo/bin:$PATH"
+        fi
+    fi
+    
     # Check Rust
     if ! command_exists cargo; then
         print_status "Attempting to source Rust environment..."
@@ -93,9 +119,16 @@ check_requirements() {
         fi
         
         if ! command_exists cargo; then
-            print_error "Rust/Cargo not found. Please install Rust first:"
-            echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-            echo "Then run: source ~/.cargo/env"
+            if [[ "$EUID" -eq 0 ]]; then
+                print_error "Rust not found when running as root."
+                print_status "Please run this script without sudo:"
+                print_status "  ./install.sh"
+                print_status "The script will prompt for sudo when needed for system packages."
+            else
+                print_error "Rust/Cargo not found. Please install Rust first:"
+                echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+                echo "Then run: source ~/.cargo/env"
+            fi
             exit 1
         else
             print_success "Rust environment loaded successfully"
@@ -382,6 +415,14 @@ main() {
     echo -e "${CYAN}=====================================================${NC}"
     echo -e "${CYAN}Clean installation with automatic PyTorch setup${NC}"
     echo ""
+    
+    # Warn if running as root
+    if [[ "$EUID" -eq 0 ]]; then
+        print_warning "Running as root/sudo detected!"
+        print_status "For best results, run without sudo: ./install.sh"
+        print_status "The script will prompt for sudo when needed for system packages."
+        echo ""
+    fi
     
     # Parse command line arguments
     SETUP_ONLY=false
