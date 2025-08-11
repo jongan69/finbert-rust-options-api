@@ -21,8 +21,20 @@ source ~/pytorch-venv/bin/activate
 
 # Step 3: Check PyTorch version and try to fix compatibility
 echo -e "${BLUE}[INFO]${NC} 🔍 Checking PyTorch version compatibility..."
-PYTORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)")
+PYTORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "not installed")
 echo -e "${BLUE}[DEBUG]${NC} Current PyTorch version: $PYTORCH_VERSION"
+
+# Check NumPy version first
+NUMPY_VERSION=$(python3 -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "not installed")
+echo -e "${BLUE}[DEBUG]${NC} Current NumPy version: $NUMPY_VERSION"
+
+# Fix NumPy version if needed
+if [[ "$NUMPY_VERSION" == "2."* ]]; then
+    echo -e "${YELLOW}[WARNING]${NC} NumPy 2.x detected, downgrading to NumPy 1.x for PyTorch compatibility..."
+    pip uninstall numpy -y
+    pip install "numpy<2.0"
+    echo -e "${BLUE}[DEBUG]${NC} New NumPy version: $(python3 -c "import numpy; print(numpy.__version__)")"
+fi
 
 # Check if we need to downgrade PyTorch for compatibility
 if [[ "$PYTORCH_VERSION" == "2.8.0"* ]]; then
