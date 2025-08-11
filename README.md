@@ -942,13 +942,19 @@ APCA_API_SECRET_KEY=your_alpaca_secret_key
 ```bash
 APCA_BASE_URL=https://paper-api.alpaca.markets
 SERVER_HOST=127.0.0.1                    # Use 0.0.0.0 for external access
-SERVER_PORT=3000
+SERVER_PORT=3000                          # Change port here
 SENTIMENT_MODEL_PATH=finbert-onnx
 MAX_CONCURRENT_REQUESTS=10               # Reduce to 5 for Raspberry Pi
 REQUEST_TIMEOUT_SECS=30
 MAX_TEXT_LENGTH=10000
 RUST_LOG=finbert_rs=info
 ```
+
+**To change the port:**
+1. Edit the `.env` file: `nano .env`
+2. Change `SERVER_PORT=3000` to your desired port
+3. Restart the service: `sudo systemctl restart finbert-api.service`
+4. The systemd service automatically reads the new port from `.env`
 
 ## 🚀 Trading Bot Integration
 

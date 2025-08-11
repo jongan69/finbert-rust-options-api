@@ -213,8 +213,19 @@ sudo systemctl start finbert-api.service
 sleep 2
 sudo systemctl status finbert-api.service --no-pager
 echo ""
-echo "📊 API should be available at: http://$(hostname -I | awk '{print $1}'):3000"
-echo "❤️  Health check: curl http://$(hostname -I | awk '{print $1}'):3000/health"
+
+# Read port from .env file, default to 3000
+PORT=3000
+if [ -f ".env" ]; then
+    source .env
+    if [ ! -z "$SERVER_PORT" ]; then
+        PORT=$SERVER_PORT
+    fi
+fi
+
+LOCAL_IP=$(hostname -I | awk '{print $1}')
+echo "📊 API should be available at: http://$LOCAL_IP:$PORT"
+echo "❤️  Health check: curl http://$LOCAL_IP:$PORT/health"
 EOF
 
 # Stop script
@@ -266,9 +277,17 @@ echo "   • View logs:    ./logs-api.sh"
 echo ""
 print_status "🌐 ENDPOINTS (when running):"
 LOCAL_IP=$(hostname -I | awk '{print $1}')
-echo "   • API:     http://$LOCAL_IP:3000/analyze"
-echo "   • Health:  http://$LOCAL_IP:3000/health"
-echo "   • Metrics: http://$LOCAL_IP:3000/metrics"
+# Read port from .env file, default to 3000
+PORT=3000
+if [ -f ".env" ]; then
+    source .env
+    if [ ! -z "$SERVER_PORT" ]; then
+        PORT=$SERVER_PORT
+    fi
+fi
+echo "   • API:     http://$LOCAL_IP:$PORT/analyze"
+echo "   • Health:  http://$LOCAL_IP:$PORT/health"
+echo "   • Metrics: http://$LOCAL_IP:$PORT/metrics"
 echo ""
 print_status "📁 FILES CREATED:"
 echo "   • Binary:     ./target/release/finbert-rust-options-api"
