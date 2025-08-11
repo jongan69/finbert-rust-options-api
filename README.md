@@ -7,17 +7,23 @@ A production-ready sentiment analysis API using FinBERT ONNX models for automate
 **One-command setup for Raspberry Pi:**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/your-repo/finbert-rs/main/setup-rpi.sh | bash
+curl -sSL https://raw.githubusercontent.com/jongan69/finbert-rust-options-api/refs/heads/main/setup-rpi.sh | bash
 ```
 
 **Or manual setup:**
 
 ```bash
-git clone https://github.com/your-repo/finbert-rs
-cd finbert-rs
+git clone https://github.com/jongan69/finbert-rust-options-api
+cd finbert-rust-options-api
 chmod +x setup-rpi.sh
 ./setup-rpi.sh
 ```
+
+**The setup script automatically creates a systemd service that:**
+- ✅ **Starts on boot** - API runs automatically after reboot
+- ✅ **Auto-restarts** - Service restarts if it crashes  
+- ✅ **Resource limits** - Optimized for Raspberry Pi
+- ✅ **Logging** - All logs available via `journalctl`
 
 ## 📋 Prerequisites
 
@@ -41,14 +47,19 @@ chmod +x setup-rpi.sh
 
 ## 🎮 Management Commands
 
-After setup, use these commands:
+After setup, the API runs automatically. Use these commands to manage it:
 
 ```bash
-./start-api.sh    # Start the API service
+./start-api.sh    # Start the API service (if stopped)
 ./stop-api.sh     # Stop the API service  
-./status-api.sh   # Check service status
-./logs-api.sh     # View real-time logs
+./status-api.sh   # Check service status and health
+./logs-api.sh     # View real-time logs (Ctrl+C to exit)
 ```
+
+**Service status after reboot:**
+- ✅ API starts automatically on boot
+- ✅ Check status: `./status-api.sh`
+- ✅ View startup logs: `./logs-api.sh`
 
 ## 🌐 API Endpoints
 
@@ -85,7 +96,7 @@ cargo build --release
 
 **Run directly:**
 ```bash
-APCA_API_KEY_ID=key APCA_API_SECRET_KEY=secret ./target/release/finbert-rs
+APCA_API_KEY_ID=key APCA_API_SECRET_KEY=secret ./target/release/finbert-rust-options-api
 ```
 
 **Check service logs:**
@@ -96,7 +107,7 @@ sudo journalctl -u finbert-api.service -f
 ## 📁 File Structure
 
 ```
-finbert-rs/
+finbert-rust-options-api/
 ├── setup-rpi.sh           # One-click setup script
 ├── start-api.sh           # Start service
 ├── stop-api.sh            # Stop service  
@@ -544,9 +555,9 @@ RUN cargo build --release
 
 FROM debian:bullseye-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/finbert-rs /usr/local/bin/
+COPY --from=builder /app/target/release/finbert-rust-options-api /usr/local/bin/
 EXPOSE 3000
-CMD ["finbert-rs"]
+CMD ["finbert-rust-options-api"]
 ```
 
 ### Systemd Service Installation
@@ -565,7 +576,7 @@ sudo ./install-service.sh
 ```ini
 [Unit]
 Description=FinBERT Sentiment Analysis Trading API
-Documentation=https://github.com/your-repo/finbert-rs
+Documentation=https://github.com/jongan69/finbert-rust-options-api
 After=network.target
 Wants=network.target
 StartLimitIntervalSec=0
@@ -574,25 +585,25 @@ StartLimitIntervalSec=0
 Type=simple
 User=finbert
 Group=finbert
-WorkingDirectory=/opt/finbert-rs
+WorkingDirectory=/opt/finbert-rust-options-api 
 Environment=RUST_LOG=info
 Environment=APCA_API_KEY_ID=your_alpaca_api_key_here
 Environment=APCA_API_SECRET_KEY=your_alpaca_secret_key_here
 Environment=APCA_BASE_URL=https://paper-api.alpaca.markets
-ExecStart=/usr/local/bin/finbert-rs
+ExecStart=/usr/local/bin/finbert-rust-options-api
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=finbert-api
+SyslogIdentifier=finbert-rust-options-api
 
 # Security settings
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/finbert-rs/logs
+ReadWritePaths=/opt/finbert-rust-options-api/logs 
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
@@ -616,13 +627,13 @@ WantedBy=multi-user.target
 
 2. **Install the binary**:
 ```bash
-sudo cp target/release/finbert-rs /usr/local/bin/
-sudo chmod +x /usr/local/bin/finbert-rs
+sudo cp target/release/finbert-rust-options-api /usr/local/bin/
+sudo chmod +x /usr/local/bin/finbert-rust-options-api
 ```
 
 3. **Create service user**:
 ```bash
-sudo useradd --system --shell /bin/false --home-dir /opt/finbert-rs --create-home finbert
+sudo useradd --system --shell /bin/false --home-dir /opt/finbert-rust-options-api --create-home finbert
 ```
 
 4. **Enable and start the service**:
@@ -1042,8 +1053,8 @@ bot.getTradingSignals().then(analysis => {
 
 ### Building from Source
 ```bash
-git clone https://github.com/your-repo/finbert-rs
-cd finbert-rs
+git clone https://github.com/jongan69/finbert-rust-options-api   
+cd finbert-rust-options-api
 cargo build --release
 ```
 

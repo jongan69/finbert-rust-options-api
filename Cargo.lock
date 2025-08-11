@@ -484,7 +484,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "finbert-rs"
+name = "finbert-rust-options-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",

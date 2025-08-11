@@ -49,12 +49,22 @@ print_step "Installing system dependencies..."
 sudo apt install -y \
     curl \
     git \
+    git-lfs \
     build-essential \
     pkg-config \
     libssl-dev \
     libclang-dev \
     clang \
     cmake
+
+# Initialize Git LFS
+print_step "Initializing Git LFS..."
+if ! git lfs --version &> /dev/null; then
+    print_error "Git LFS installation failed!"
+    exit 1
+fi
+git lfs install
+print_status "Git LFS installed and configured"
 
 # Install Rust if not already installed
 if ! command -v rustc &> /dev/null; then
@@ -75,11 +85,20 @@ print_step "Downloading FinBERT ONNX model..."
 if [ -d "finbert-onnx" ]; then
     print_status "ONNX model directory already exists, updating..."
     cd finbert-onnx
-    git pull
+    # Ensure LFS files are pulled
+    git lfs pull
+    git pull origin main || git pull origin master
+    git lfs pull  # Pull any new LFS files after update
     cd ..
 else
     print_status "Cloning FinBERT ONNX model from Hugging Face..."
     git clone https://huggingface.co/jonngan/finbert-onnx
+    
+    # Ensure LFS files are downloaded
+    print_status "Downloading large model files via Git LFS..."
+    cd finbert-onnx
+    git lfs pull
+    cd ..
 fi
 
 # Verify model files exist
@@ -127,7 +146,7 @@ else
 fi
 
 # Verify build succeeded
-if [ ! -f "target/release/finbert-rs" ]; then
+if [ ! -f "target/release/finbert-rust-options-api" ]; then
     print_error "Build failed! Binary not found."
     exit 1
 fi
@@ -149,7 +168,7 @@ fi
 
 # Quick test run (3 seconds)
 print_status "Running quick startup test..."
-timeout 3s ./target/release/finbert-rs || true
+timeout 3s ./target/release/finbert-rust-options-api || true
 
 # Create systemd service file
 print_step "Creating systemd service..."
@@ -163,7 +182,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$(pwd)
 EnvironmentFile=$(pwd)/.env
-ExecStart=$(pwd)/target/release/finbert-rs
+ExecStart=$(pwd)/target/release/finbert-rust-options-api
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -252,7 +271,7 @@ echo "   • Health:  http://$LOCAL_IP:3000/health"
 echo "   • Metrics: http://$LOCAL_IP:3000/metrics"
 echo ""
 print_status "📁 FILES CREATED:"
-echo "   • Binary:     ./target/release/finbert-rs"
+echo "   • Binary:     ./target/release/finbert-rust-options-api"
 echo "   • Service:    /etc/systemd/system/finbert-api.service"
 echo "   • Config:     ./.env"
 echo "   • Model:      ./finbert-onnx/"
