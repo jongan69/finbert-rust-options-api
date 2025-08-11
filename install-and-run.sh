@@ -1,10 +1,5 @@
 #!/bin/bash
 
-# FinBERT Rust Options API - Complete Installation and Run Script
-# This script handles everything from PyTorch installation to running the API
-
-set -e
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,6 +9,14 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
+# Configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_NAME="finbert-rs"
+VENV_PATH="$HOME/pytorch-venv"
+PYTORCH_VERSION="2.1.2"
+RUST_BERT_VERSION="0.23.0"
+
+# Function to print colored output
 print_status() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -34,270 +37,334 @@ print_step() {
     echo -e "${PURPLE}[STEP]${NC} $1"
 }
 
-print_header() {
-    echo -e "${CYAN}================================${NC}"
-    echo -e "${CYAN}$1${NC}"
-    echo -e "${CYAN}================================${NC}"
+# Function to check if command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
 }
 
-# Configuration
-VENV_DIR="$HOME/pytorch-venv"
-PROJECT_DIR="$(pwd)"
-API_PORT=3000
-
-print_header "FinBERT Rust Options API - Complete Setup"
-echo ""
-print_status "This script will install and run the FinBERT API on your system"
-print_status "Project directory: $PROJECT_DIR"
-print_status "Virtual environment: $VENV_DIR"
-echo ""
-
-# Check if running as root
-if [[ $EUID -eq 0 ]]; then
-    print_error "This script should not be run as root"
-    print_error "Please run as a regular user"
-    exit 1
-fi
-
-# Check architecture
-ARCH=$(uname -m)
-print_status "Detected architecture: $ARCH"
-
-if [[ "$ARCH" != "aarch64" && "$ARCH" != "armv7l" && "$ARCH" != "x86_64" ]]; then
-    print_error "Unsupported architecture: $ARCH"
-    exit 1
-fi
-
-# Check if Rust is installed
-if ! command -v cargo &> /dev/null; then
-    print_error "Rust is not installed. Please install Rust first:"
-    echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-    echo "source ~/.cargo/env"
-    exit 1
-fi
-
-print_success "Rust is installed: $(cargo --version)"
-
-# Step 1: Install system dependencies
-print_header "Step 1: Installing System Dependencies"
-
-print_step "Updating package lists..."
-sudo apt-get update
-
-print_step "Installing system dependencies..."
-sudo apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-dev \
-    python3-venv \
-    python3-full \
-    libopenblas-dev \
-    liblapack-dev \
-    libgomp1 \
-    libnuma-dev \
-    pkg-config \
-    build-essential \
-    curl \
-    git
-
-print_success "System dependencies installed"
-
-# Step 2: Set up Python virtual environment
-print_header "Step 2: Setting Up Python Virtual Environment"
-
-if [[ -d "$VENV_DIR" ]]; then
-    print_warning "Virtual environment already exists at $VENV_DIR"
-    read -p "Do you want to recreate it? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        print_step "Removing existing virtual environment..."
-        rm -rf "$VENV_DIR"
-    else
-        print_status "Using existing virtual environment"
-    fi
-fi
-
-if [[ ! -d "$VENV_DIR" ]]; then
-    print_step "Creating Python virtual environment..."
-    python3 -m venv "$VENV_DIR"
-    print_success "Virtual environment created"
-fi
-
-# Step 3: Install PyTorch
-print_header "Step 3: Installing PyTorch"
-
-print_step "Activating virtual environment..."
-source "$VENV_DIR/bin/activate"
-
-print_step "Upgrading pip..."
-pip install --upgrade pip
-
-print_step "Installing PyTorch..."
-if [[ "$ARCH" == "aarch64" || "$ARCH" == "armv7l" ]]; then
-    print_status "Installing ARM64 PyTorch..."
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+# Function to check system requirements
+check_requirements() {
+    print_step "Checking system requirements..."
     
-    # Check if headers are available
-    print_step "Checking PyTorch headers..."
-    if [[ ! -f "$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/lib\/include\/torch\/torch.h')" ]]; then
-        print_warning "PyTorch headers not found. ARM64 wheels may not include development headers."
-        print_status "Attempting to install PyTorch with development components..."
-        pip uninstall torch torchvision torchaudio -y
-        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --force-reinstall
-        
-        # Check again
-        if [[ ! -f "$(python3 -c "import torch; print(torch.__file__)" | head -1 | sed 's/__init__.py/lib\/include\/torch\/torch.h')" ]]; then
-            print_warning "PyTorch headers still missing. This may cause build issues."
-            print_status "You may need to build PyTorch from source or use a different approach."
-        else
-            print_success "PyTorch headers found after reinstall"
-        fi
-    else
-        print_success "PyTorch headers found"
+    # Check if running on ARM64
+    if [[ "$(uname -m)" != "aarch64" ]]; then
+        print_warning "This script is optimized for ARM64 (Raspberry Pi). You're running on $(uname -m)"
     fi
-else
-    print_status "Installing x86_64 PyTorch..."
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-fi
-
-print_step "Verifying PyTorch installation..."
-python3 -c "
-import torch
-print(f'PyTorch version: {torch.__version__}')
-print(f'Device: {torch.device(\"cpu\")}')
-print('PyTorch installation successful!')
-"
-
-# Step 4: Set up environment variables
-print_header "Step 4: Setting Up Environment Variables"
-
-print_step "Finding PyTorch library path..."
-PYTORCH_PATH=$(python3 -c "import torch; print(torch.__file__)" | head -1)
-PYTORCH_LIB_PATH=$(dirname "$PYTORCH_PATH")/lib
-
-export LIBTORCH="$PYTORCH_LIB_PATH"
-export LD_LIBRARY_PATH="$PYTORCH_LIB_PATH:$LD_LIBRARY_PATH"
-
-print_status "LIBTORCH: $LIBTORCH"
-print_status "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
-
-# Add to .bashrc for persistence
-if ! grep -q "PYTORCH_VENV" ~/.bashrc; then
-    print_step "Adding environment variables to ~/.bashrc..."
-    echo "" >> ~/.bashrc
-    echo "# PyTorch Virtual Environment" >> ~/.bashrc
-    echo "export PYTORCH_VENV=$VENV_DIR" >> ~/.bashrc
-    echo "export LIBTORCH=$LIBTORCH" >> ~/.bashrc
-    echo "export LD_LIBRARY_PATH=$PYTORCH_LIB_PATH:\$LD_LIBRARY_PATH" >> ~/.bashrc
-    echo "alias activate-pytorch='source \$PYTORCH_VENV/bin/activate'" >> ~/.bashrc
-    print_success "Environment variables added to ~/.bashrc"
-fi
-
-# Step 5: Check for FinBERT model
-print_header "Step 5: Setting Up FinBERT Model"
-
-if [[ ! -d "finbert" ]]; then
-    print_step "Cloning FinBERT model..."
-    git clone https://huggingface.co/ProsusAI/finbert
-    print_success "FinBERT model downloaded"
-else
-    print_status "FinBERT model already exists"
-fi
-
-# Step 6: Build Rust project
-print_header "Step 6: Building Rust Project"
-
-print_step "Cleaning previous builds..."
-cargo clean
-
-print_step "Building with release optimizations..."
-
-# Try to build
-if cargo build --release; then
-    print_success "Rust project built successfully"
-else
-    print_warning "Build failed. This may be due to missing PyTorch headers."
-    print_status "Attempting to fix PyTorch linking issues..."
     
-    # Run the fix script
-    if [[ -f "fix-pytorch-linking.sh" ]]; then
-        print_step "Running PyTorch linking fix..."
-        ./fix-pytorch-linking.sh
-    else
-        print_error "fix-pytorch-linking.sh not found. Manual intervention required."
-        print_status "Please run the following commands manually:"
-        echo "cargo clean"
-        echo "rm -rf target/release/build/torch-sys-*"
-        echo "source ~/pytorch-venv/bin/activate"
-        echo "export LIBTORCH=\"\$(python3 -c \"import torch; print(torch.__file__)\" | head -1 | sed 's/__init__.py/lib/')\""
-        echo "export LD_LIBRARY_PATH=\"\$LIBTORCH:\$LD_LIBRARY_PATH\""
-        echo "cargo build --release"
+    # Check Rust
+    if ! command_exists cargo; then
+        print_error "Rust/Cargo not found. Please install Rust first:"
+        echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
         exit 1
     fi
-fi
-
-# Step 7: Set up environment file
-print_header "Step 7: Setting Up Environment Configuration"
-
-if [[ ! -f ".env" ]]; then
-    print_step "Creating .env file..."
-    cp .env.example .env 2>/dev/null || {
-        print_step "Creating .env file from template..."
-        cat > .env << EOF
-# Alpaca API Configuration
-APCA_API_KEY_ID=your_alpaca_api_key_here
-APCA_API_SECRET_KEY=your_alpaca_secret_key_here
-APCA_BASE_URL=https://api.alpaca.markets
-
-# Logging
-RUST_LOG=info
-EOF
-    }
-    print_warning "Please update .env file with your Alpaca API credentials"
-    print_warning "Edit .env and add your actual API keys before running the API"
-else
-    print_status ".env file already exists"
-fi
-
-# Step 8: Test the build
-print_header "Step 8: Testing the Build"
-
-print_step "Checking if binary was created..."
-if [[ -f "target/release/finbert-rs" ]]; then
-    print_success "Binary created successfully"
-    ls -lh target/release/finbert-rs
-else
-    print_error "Binary not found. Build may have failed."
-    exit 1
-fi
-
-# Step 9: Run the API
-print_header "Step 9: Running the FinBERT API"
-
-print_status "API will be available at: http://localhost:$API_PORT"
-print_status "Health check: http://localhost:$API_PORT/health"
-print_status "Analysis endpoint: http://localhost:$API_PORT/analyze"
-echo ""
-
-# Check if API keys are configured
-if grep -q "your_alpaca_api_key_here" .env; then
-    print_warning "API keys not configured in .env file"
-    print_warning "The API will start but may not be able to fetch market data"
-    echo ""
-    read -p "Do you want to configure API keys now? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        print_step "Please edit the .env file with your API keys:"
-        echo "nano .env"
-        echo ""
-        print_warning "After editing, restart the API"
-        exit 0
+    
+    # Check Python
+    if ! command_exists python3; then
+        print_error "Python3 not found. Please install Python 3.8+ first."
+        exit 1
     fi
-fi
+    
+    # Check Python version
+    local python_version=$(python3 --version 2>&1 | grep -oP '\d+\.\d+' | head -1)
+    if [[ "$python_version" < "3.8" ]]; then
+        print_error "Python 3.8+ required, found $python_version"
+        exit 1
+    fi
+    
+    # Check memory
+    local mem_gb=$(free -g | awk '/^Mem:/{print $2}')
+    if [[ "$mem_gb" -lt 2 ]]; then
+        print_warning "Low memory detected (${mem_gb}GB). 4GB+ recommended for optimal performance."
+    fi
+    
+    print_success "System requirements check passed"
+}
 
-print_step "Starting the FinBERT API..."
-print_status "Press Ctrl+C to stop the API"
-echo ""
+# Function to setup Python virtual environment
+setup_python_env() {
+    print_step "Setting up Python virtual environment..."
+    
+    if [[ ! -d "$VENV_PATH" ]]; then
+        print_status "Creating virtual environment at $VENV_PATH"
+        python3 -m venv "$VENV_PATH"
+    fi
+    
+    print_status "Activating virtual environment..."
+    source "$VENV_PATH/bin/activate"
+    
+    # Upgrade pip
+    pip install --upgrade pip
+    
+    print_success "Python environment ready"
+}
 
-# Run the API
-cargo run --release
+# Function to install PyTorch with compatibility fixes
+install_pytorch() {
+    print_step "Installing PyTorch with compatibility fixes..."
+    
+    # Check current PyTorch version
+    local current_version=$(python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "not installed")
+    print_status "Current PyTorch version: $current_version"
+    
+    # Fix NumPy version first
+    local numpy_version=$(python3 -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "not installed")
+    if [[ "$numpy_version" == "2."* ]]; then
+        print_warning "NumPy 2.x detected, downgrading to 1.x for compatibility"
+        pip uninstall numpy -y
+        pip install "numpy<2.0"
+    fi
+    
+    # Install compatible PyTorch version
+    if [[ "$current_version" != "$PYTORCH_VERSION" ]]; then
+        print_status "Installing PyTorch $PYTORCH_VERSION for torch-sys compatibility..."
+        pip uninstall torch torchvision torchaudio -y 2>/dev/null || true
+        pip install "torch==$PYTORCH_VERSION" "torchvision==0.16.2" "torchaudio==$PYTORCH_VERSION" --index-url https://download.pytorch.org/whl/cpu
+        
+        # Verify installation
+        local new_version=$(python3 -c "import torch; print(torch.__version__)")
+        if [[ "$new_version" == "$PYTORCH_VERSION" ]]; then
+            print_success "PyTorch $PYTORCH_VERSION installed successfully"
+        else
+            print_error "Failed to install PyTorch $PYTORCH_VERSION"
+            exit 1
+        fi
+    else
+        print_success "PyTorch $PYTORCH_VERSION already installed"
+    fi
+}
+
+# Function to setup environment variables
+setup_environment() {
+    print_step "Setting up environment variables..."
+    
+    # Get PyTorch path
+    local torch_path=$(python3 -c "import torch; print(torch.__file__)" 2>/dev/null)
+    if [[ -z "$torch_path" ]]; then
+        print_error "PyTorch not found. Please ensure PyTorch is installed."
+        exit 1
+    fi
+    
+    # Set environment variables
+    export LIBTORCH="$(echo "$torch_path" | sed 's/__init__.py/lib/')"
+    export LD_LIBRARY_PATH="$LIBTORCH:$LD_LIBRARY_PATH"
+    export LIBTORCH_INCLUDE="$(echo "$torch_path" | sed 's/__init__.py//')"
+    export LIBTORCH_USE_PYTORCH=1
+    export LIBTORCH_CXX11_ABI=0
+    export LIBTORCH_STATIC=0
+    
+    print_status "Environment variables set:"
+    print_status "  LIBTORCH: $LIBTORCH"
+    print_status "  LIBTORCH_INCLUDE: $LIBTORCH_INCLUDE"
+    print_status "  LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+    
+    print_success "Environment setup complete"
+}
+
+# Function to download FinBERT model
+download_finbert_model() {
+    print_step "Setting up FinBERT model..."
+    
+    if [[ ! -d "finbert" ]]; then
+        print_status "Downloading FinBERT model from Hugging Face..."
+        git clone https://huggingface.co/ProsusAI/finbert finbert
+        if [[ $? -eq 0 ]]; then
+            print_success "FinBERT model downloaded successfully"
+        else
+            print_error "Failed to download FinBERT model"
+            exit 1
+        fi
+    else
+        print_success "FinBERT model already exists"
+    fi
+}
+
+# Function to setup environment file
+setup_env_file() {
+    print_step "Setting up environment configuration..."
+    
+    if [[ ! -f ".env" ]]; then
+        print_status "Creating .env file from template..."
+        cp env.example .env
+        print_warning "Please edit .env file with your Alpaca API credentials:"
+        echo "  APCA_API_KEY_ID=your_api_key_here"
+        echo "  APCA_API_SECRET_KEY=your_secret_key_here"
+        echo "  APCA_BASE_URL=https://paper-api.alpaca.markets"
+    else
+        print_success ".env file already exists"
+    fi
+}
+
+# Function to clean build cache
+clean_build_cache() {
+    print_step "Cleaning build cache..."
+    
+    cargo clean
+    rm -rf target/release/build/torch-sys-*
+    rm -rf ~/.cargo/registry/cache/*/torch-sys*
+    
+    print_success "Build cache cleaned"
+}
+
+# Function to build the project
+build_project() {
+    print_step "Building FinBERT Rust application..."
+    
+    # Set build jobs based on available memory
+    local mem_gb=$(free -g | awk '/^Mem:/{print $2}')
+    if [[ "$mem_gb" -lt 4 ]]; then
+        export CARGO_BUILD_JOBS=1
+        print_warning "Using single core build due to limited memory"
+    else
+        export CARGO_BUILD_JOBS=$(nproc)
+        print_status "Using $(nproc) cores for build"
+    fi
+    
+    print_status "Building with release profile..."
+    if cargo build --release; then
+        print_success "Build completed successfully!"
+    else
+        print_error "Build failed. Check the error messages above."
+        exit 1
+    fi
+}
+
+# Function to run the application
+run_application() {
+    print_step "Starting FinBERT Rust application..."
+    
+    # Check if binary exists
+    if [[ ! -f "target/release/$PROJECT_NAME" ]]; then
+        print_error "Binary not found. Please build the project first."
+        exit 1
+    fi
+    
+    print_success "🚀 Starting FinBERT Rust API..."
+    print_status "📊 Analysis endpoint: http://127.0.0.1:3000/analyze"
+    print_status "❤️  Health check: http://127.0.0.1:3000/health"
+    print_status "📈 Metrics: http://127.0.0.1:3000/metrics"
+    echo ""
+    
+    # Run the application
+    exec cargo run --release
+}
+
+# Function to show usage
+show_usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --setup-only     Only setup environment, don't run"
+    echo "  --build-only     Only build the project, don't run"
+    echo "  --run-only       Only run the application (assumes setup is complete)"
+    echo "  --clean          Clean build cache before building"
+    echo "  --help           Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0               # Full setup and run"
+    echo "  $0 --setup-only  # Setup environment only"
+    echo "  $0 --run-only    # Run existing build"
+    echo ""
+}
+
+# Function to handle signals
+cleanup() {
+    print_status "Shutting down..."
+    exit 0
+}
+
+# Set up signal handlers
+trap cleanup SIGINT SIGTERM
+
+# Main execution
+main() {
+    echo -e "${CYAN}🤖 FinBERT Rust Options API - Install & Run Script${NC}"
+    echo -e "${CYAN}================================================${NC}"
+    echo ""
+    
+    # Parse command line arguments
+    SETUP_ONLY=false
+    BUILD_ONLY=false
+    RUN_ONLY=false
+    CLEAN_BUILD=false
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --setup-only)
+                SETUP_ONLY=true
+                shift
+                ;;
+            --build-only)
+                BUILD_ONLY=true
+                shift
+                ;;
+            --run-only)
+                RUN_ONLY=true
+                shift
+                ;;
+            --clean)
+                CLEAN_BUILD=true
+                shift
+                ;;
+            --help)
+                show_usage
+                exit 0
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_usage
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Change to script directory
+    cd "$SCRIPT_DIR"
+    
+    if [[ "$RUN_ONLY" == true ]]; then
+        print_step "Run-only mode selected"
+        run_application
+    elif [[ "$BUILD_ONLY" == true ]]; then
+        print_step "Build-only mode selected"
+        check_requirements
+        setup_python_env
+        install_pytorch
+        setup_environment
+        download_finbert_model
+        setup_env_file
+        if [[ "$CLEAN_BUILD" == true ]]; then
+            clean_build_cache
+        fi
+        build_project
+    elif [[ "$SETUP_ONLY" == true ]]; then
+        print_step "Setup-only mode selected"
+        check_requirements
+        setup_python_env
+        install_pytorch
+        setup_environment
+        download_finbert_model
+        setup_env_file
+        print_success "Setup completed successfully!"
+        echo ""
+        print_status "Next steps:"
+        print_status "1. Edit .env file with your Alpaca API credentials"
+        print_status "2. Run: $0 --build-only"
+        print_status "3. Run: $0 --run-only"
+    else
+        # Full setup and run
+        print_step "Full setup and run mode"
+        check_requirements
+        setup_python_env
+        install_pytorch
+        setup_environment
+        download_finbert_model
+        setup_env_file
+        if [[ "$CLEAN_BUILD" == true ]]; then
+            clean_build_cache
+        fi
+        build_project
+        run_application
+    fi
+}
+
+# Run main function
+main "$@"
