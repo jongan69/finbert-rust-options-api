@@ -70,7 +70,7 @@ impl AppConfig {
             request_timeout_secs: std::env::var("REQUEST_TIMEOUT_SECS")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(30),
+                .unwrap_or(60),
             
             max_text_length: std::env::var("MAX_TEXT_LENGTH")
                 .ok()
@@ -99,7 +99,7 @@ impl Default for AppConfig {
             alpaca_base_url: std::env::var("APCA_BASE_URL").unwrap_or_else(|_| "https://paper-api.alpaca.markets".to_string()),
             server_host: "127.0.0.1".to_string(),
             server_port: 3000,
-            request_timeout_secs: 30,
+            request_timeout_secs: 60,
             max_text_length: 10000,
         }
     }

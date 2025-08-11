@@ -729,7 +729,7 @@ max_single_position = 0.05     # 5% per position
    - Consider pre-warming the model
 
 2. **API Timeouts**
-   - Default timeout: 30 seconds
+   - Default timeout: 60 seconds
    - Implement retry logic in your bot
    - Check Alpaca API status
 
@@ -945,7 +945,7 @@ SERVER_HOST=127.0.0.1                    # Use 0.0.0.0 for external access
 SERVER_PORT=3000                          # Change port here
 SENTIMENT_MODEL_PATH=finbert-onnx
 MAX_CONCURRENT_REQUESTS=10               # Reduce to 5 for Raspberry Pi
-REQUEST_TIMEOUT_SECS=30
+REQUEST_TIMEOUT_SECS=60
 MAX_TEXT_LENGTH=10000
 RUST_LOG=finbert_rs=info
 ```

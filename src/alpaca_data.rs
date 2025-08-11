@@ -13,7 +13,7 @@ pub async fn get_alpaca_news() -> Result<Value, String> {
         .map_err(|_| "APCA_API_SECRET_KEY missing".to_string())?;
     
     let client = Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(60))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
     
@@ -23,7 +23,7 @@ pub async fn get_alpaca_news() -> Result<Value, String> {
     
     while attempt < max_attempts {
         let resp = timeout(
-            Duration::from_secs(30),
+            Duration::from_secs(60),
             client.get("https://data.alpaca.markets/v1beta1/news?sort=desc&limit=50")
                 .header("APCA-API-KEY-ID", key.clone())
                 .header("APCA-API-SECRET-KEY", secret.clone())
@@ -61,7 +61,7 @@ pub async fn fetch_alpaca_options(symbol: &str, q: &OptionsQuery) -> Result<Valu
         let (key, secret) = headers;
         
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(60))
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
         
@@ -89,7 +89,7 @@ pub async fn fetch_alpaca_options(symbol: &str, q: &OptionsQuery) -> Result<Valu
             if let Some(v) = &q.page_token { qp.push(("page_token".into(), v.clone())); }
             req = req.query(&qp);
             
-            let resp = timeout(Duration::from_secs(30), req.send()).await
+            let resp = timeout(Duration::from_secs(60), req.send()).await
                 .map_err(|_| "Request timeout".to_string())?
                 .map_err(|e| format!("alpaca req error: {e}"))?;
             
