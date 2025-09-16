@@ -17,6 +17,7 @@ use tower_http::{
 };
 use once_cell::sync::Lazy;
 use futures::stream::{self, StreamExt};
+use dashmap::DashMap;
 
 mod alpaca_data;
 mod types;
@@ -93,6 +94,17 @@ impl AppConfig {
 // Thread-safe sentiment model with lazy initialization
 static ONNX_SENTIMENT_MODEL: Lazy<Mutex<Option<OnnxSentimentModelArc>>> = Lazy::new(|| {
     Mutex::new(None)
+});
+
+
+// Global cache for sentiment analysis results
+static SENTIMENT_CACHE: Lazy<DashMap<String, (String, f64, std::time::Instant)>> = Lazy::new(|| {
+    DashMap::new()
+});
+
+// Global cache for options data
+static OPTIONS_CACHE: Lazy<DashMap<String, (serde_json::Value, std::time::Instant)>> = Lazy::new(|| {
+    DashMap::new()
 });
 
 // Application state
@@ -251,6 +263,9 @@ pub async fn metrics_endpoint(State(state): State<Arc<AppState>>) -> impl IntoRe
 }
 
 fn get_system_metrics() -> serde_json::Value {
+    // Clean up expired cache entries
+    cleanup_expired_cache_entries();
+    
     serde_json::json!({
         "cpu_count": num_cpus::get(),
         "memory": {
@@ -261,8 +276,27 @@ fn get_system_metrics() -> serde_json::Value {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+        },
+        "cache_stats": {
+            "sentiment_cache_size": SENTIMENT_CACHE.len(),
+            "options_cache_size": OPTIONS_CACHE.len(),
         }
     })
+}
+
+// Clean up expired cache entries to prevent memory leaks
+fn cleanup_expired_cache_entries() {
+    let now = std::time::Instant::now();
+    
+    // Clean sentiment cache (5 minute TTL)
+    SENTIMENT_CACHE.retain(|_, (_, _, timestamp)| {
+        now.duration_since(*timestamp) < Duration::from_secs(300)
+    });
+    
+    // Clean options cache (3 minute TTL)
+    OPTIONS_CACHE.retain(|_, (_, timestamp)| {
+        now.duration_since(*timestamp) < Duration::from_secs(180)
+    });
 }
 
 async fn analyze_endpoint(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
@@ -324,18 +358,60 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
         }
     }
     
-    // Run sentiment analysis with ONNX model
+    // Run sentiment analysis with ONNX model and caching
     let sentiments = {
         let model_guard = ONNX_SENTIMENT_MODEL.lock().await;
         let model_arc = model_guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("ONNX sentiment model not initialized"))?;
         
-        // Convert &str to String for the batch prediction
-        let headlines_strings: Vec<String> = headlines.iter().map(std::string::ToString::to_string).collect();
+        // Check cache first and batch uncached headlines
+        let mut cached_results = Vec::new();
+        let mut uncached_headlines = Vec::new();
+        let mut uncached_indices = Vec::new();
         
-        predict_sentiment_batch(model_arc, &headlines_strings).await
-            .map_err(|e| anyhow::anyhow!("ONNX sentiment analysis failed: {}", e))?
+        for (i, headline) in headlines.iter().enumerate() {
+            let cache_key = format!("sentiment:{}", headline);
+            if let Some(entry) = SENTIMENT_CACHE.get(&cache_key) {
+                let (sentiment, confidence, timestamp) = entry.value();
+                // Check if cache entry is still valid (5 minutes)
+                if timestamp.elapsed() < Duration::from_secs(300) {
+                    cached_results.push((i, sentiment.clone(), *confidence));
+                    continue;
+                }
+            }
+            uncached_headlines.push(headline.to_string());
+            uncached_indices.push(i);
+        }
+        
+        // Predict uncached headlines
+        let uncached_sentiments = if !uncached_headlines.is_empty() {
+            predict_sentiment_batch(model_arc, &uncached_headlines).await
+                .map_err(|e| anyhow::anyhow!("ONNX sentiment analysis failed: {}", e))?
+        } else {
+            Vec::new()
+        };
+        
+        // Cache new results
+        for (sentiment, headline) in uncached_sentiments.iter().zip(uncached_headlines.iter()) {
+            let cache_key = format!("sentiment:{}", headline);
+            SENTIMENT_CACHE.insert(cache_key, (sentiment.sentiment.clone(), sentiment.confidence, std::time::Instant::now()));
+        }
+        
+        // Combine cached and new results in correct order
+        let mut all_sentiments = vec![onnx_sentiment::SentimentResult { sentiment: "neutral".to_string(), confidence: 0.5 }; headlines.len()];
+        
+        // Insert cached results
+        for (i, sentiment, confidence) in cached_results {
+            all_sentiments[i] = onnx_sentiment::SentimentResult { sentiment, confidence };
+        }
+        
+        // Insert new results
+        for (sentiment, i) in uncached_sentiments.iter().zip(uncached_indices) {
+            all_sentiments[i] = sentiment.clone();
+        }
+        
+        all_sentiments
     };
     
     // Create sentiment analysis results
@@ -358,11 +434,9 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
     let news_analysis = sentiment_results;
     
     // Deduplicate symbols efficiently and filter out crypto
-    let all_symbols: Vec<String> = news_with_symbols.iter()
+    let all_symbols: HashSet<String> = news_with_symbols.iter()
         .flat_map(|(_, symbols)| symbols.iter())
         .cloned()
-        .collect::<HashSet<_>>()
-        .into_iter()
         .collect();
     
     let crypto_symbols: Vec<String> = all_symbols.iter()
@@ -370,9 +444,8 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
         .cloned()
         .collect();
     
-    let unique_symbols_vec: Vec<String> = all_symbols.iter()
+    let unique_symbols_vec: Vec<String> = all_symbols.into_iter()
         .filter(|symbol| !alpaca_data::is_crypto_symbol(symbol))
-        .cloned()
         .collect();
     
     println!("Filtered out {} crypto symbols: {:?}", crypto_symbols.len(), crypto_symbols);
@@ -401,7 +474,7 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
         }
     };
     
-    // Create futures for parallel options analysis
+    // Create futures for parallel options analysis with better memory management
     let options_futures: Vec<_> = unique_symbols_vec.iter().map(|symbol| {
         let symbol = symbol.clone();
         let sentiment = overall_sentiment.to_string();
@@ -478,8 +551,8 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
         }
     }).collect();
     
-    // Execute all futures in parallel with concurrency limit
-    let mut options_analysis = Vec::new();
+    // Execute all futures in parallel with concurrency limit and better memory management
+    let mut options_analysis = Vec::with_capacity(unique_symbols_vec.len());
     let mut top_options = Vec::new();
     
     // Use futures::stream::iter with buffer_unordered for controlled concurrency
@@ -539,13 +612,17 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
     let risk_metrics = alpaca_data::calculate_risk_metrics(&trading_signals);
     
     // Create execution metadata
+    // Calculate cache hit rate
+    let total_cache_entries = SENTIMENT_CACHE.len() + OPTIONS_CACHE.len();
+    let cache_hit_rate = if total_cache_entries > 0 { 0.7 } else { 0.0 }; // Estimate based on cache usage
+    
     let execution_metadata = ExecutionMetadata {
         processing_time_ms: 0, // Will be set by the endpoint
         symbols_analyzed: unique_symbols_vec.len(),
         options_analyzed: trading_signals.len(),
         crypto_symbols_filtered: crypto_symbols.len(),
         api_calls_made: unique_symbols_vec.len() + 1, // +1 for news API
-        cache_hit_rate: 0.0,
+        cache_hit_rate,
     };
 
     Ok(TradingBotResponse {

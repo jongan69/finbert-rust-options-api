@@ -27,3 +27,7 @@ ort = { version = "2.0.0-rc.10", features = ["ndarray"] }
 tokenizers = "0.20"
 ndarray = "0.16"
 
+# Performance optimizations
+dashmap = "5.5"
+lru = "0.12"
+

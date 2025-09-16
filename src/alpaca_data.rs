@@ -4,6 +4,28 @@ use crate::types::OptionsQuery;
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::timeout;
+use once_cell::sync::Lazy;
+use dashmap::DashMap;
+
+// Global HTTP client for connection pooling
+static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
+    Client::builder()
+        .timeout(Duration::from_secs(60))
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .build()
+        .expect("Failed to create HTTP client")
+});
+
+// Cache for news data (5 minute TTL)
+static NEWS_CACHE: Lazy<DashMap<String, (Value, std::time::Instant)>> = Lazy::new(|| {
+    DashMap::new()
+});
+
+// Cache for options data (3 minute TTL)
+static OPTIONS_CACHE: Lazy<DashMap<String, (Value, std::time::Instant)>> = Lazy::new(|| {
+    DashMap::new()
+});
 
 // Get News from Alpaca with timeout and retry logic
 pub async fn get_alpaca_news() -> Result<Value, String> {
@@ -12,10 +34,14 @@ pub async fn get_alpaca_news() -> Result<Value, String> {
     let secret = std::env::var("APCA_API_SECRET_KEY")
         .map_err(|_| "APCA_API_SECRET_KEY missing".to_string())?;
     
-    let client = Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+    // Check cache first
+    let cache_key = "alpaca_news";
+    if let Some(entry) = NEWS_CACHE.get(cache_key) {
+        let (cached_data, timestamp) = entry.value();
+        if timestamp.elapsed() < Duration::from_secs(300) { // 5 minutes
+            return Ok(cached_data.clone());
+        }
+    }
     
     // Retry logic with exponential backoff
     let mut attempt = 0;
@@ -24,7 +50,7 @@ pub async fn get_alpaca_news() -> Result<Value, String> {
     while attempt < max_attempts {
         let resp = timeout(
             Duration::from_secs(60),
-            client.get("https://data.alpaca.markets/v1beta1/news?sort=desc&limit=50")
+            HTTP_CLIENT.get("https://data.alpaca.markets/v1beta1/news?sort=desc&limit=50")
                 .header("APCA-API-KEY-ID", key.clone())
                 .header("APCA-API-SECRET-KEY", secret.clone())
                 .header("accept", "application/json")
@@ -36,6 +62,9 @@ pub async fn get_alpaca_news() -> Result<Value, String> {
         if resp.status().is_success() {
             let v = resp.json::<Value>().await
                 .map_err(|e| format!("alpaca news json error: {e}"))?;
+            
+            // Cache the result
+            NEWS_CACHE.insert(cache_key.to_string(), (v.clone(), std::time::Instant::now()));
             return Ok(v);
         }
         
@@ -60,17 +89,21 @@ pub async fn fetch_alpaca_options(symbol: &str, q: &OptionsQuery) -> Result<Valu
     async fn do_request(symbol: &str, headers: (&str, &str), q: &OptionsQuery, feed_override: Option<&str>) -> Result<Value, String> {
         let (key, secret) = headers;
         
-        let client = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+        // Check cache first
+        let cache_key = format!("options:{}:{}", symbol, feed_override.unwrap_or("indicative"));
+        if let Some(entry) = OPTIONS_CACHE.get(&cache_key) {
+            let (cached_data, timestamp) = entry.value();
+            if timestamp.elapsed() < Duration::from_secs(180) { // 3 minutes for options data
+                return Ok(cached_data.clone());
+            }
+        }
         
         // Retry logic with exponential backoff
         let mut attempt = 0;
         let max_attempts = 3;
         
         while attempt < max_attempts {
-            let mut req = client
+            let mut req = HTTP_CLIENT
                 .get(format!("https://data.alpaca.markets/v1beta1/options/snapshots/{symbol}"))
                 .header("APCA-API-KEY-ID", key)
                 .header("APCA-API-SECRET-KEY", secret)
@@ -94,7 +127,11 @@ pub async fn fetch_alpaca_options(symbol: &str, q: &OptionsQuery) -> Result<Valu
                 .map_err(|e| format!("alpaca req error: {e}"))?;
             
             if resp.status().is_success() {
-                return resp.json::<Value>().await.map_err(|e| format!("alpaca json error: {e}"));
+                let data = resp.json::<Value>().await.map_err(|e| format!("alpaca json error: {e}"))?;
+                
+                // Cache the result
+                OPTIONS_CACHE.insert(cache_key, (data.clone(), std::time::Instant::now()));
+                return Ok(data);
             }
             
             // If not successful, retry with exponential backoff

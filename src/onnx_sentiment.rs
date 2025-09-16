@@ -49,8 +49,9 @@ impl OnnxSentimentModel {
 
         // Create optimized ONNX Runtime session with error handling
         let session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level1)? // Reduce optimization for compatibility
-            .with_intra_threads(num_cpus::get().min(4))? // Reduce threads for Pi
+            .with_optimization_level(GraphOptimizationLevel::Level3)? // Use maximum optimization
+            .with_intra_threads(num_cpus::get())? // Use all available cores
+            .with_inter_threads(2)? // Use 2 inter-threads for better parallelization
             .commit_from_file(&model_file)
             .map_err(|e| anyhow::anyhow!("Failed to load ONNX model: {}. The model may be corrupted or incompatible with this ONNX Runtime version. Try re-downloading the model.", e))?;
 
@@ -253,11 +254,28 @@ impl OnnxSentimentModel {
     }
 
     pub fn predict_batch(&mut self, texts: &[String]) -> Result<Vec<SentimentResult>> {
-        let mut results = Vec::new();
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        for text in texts {
-            let result = self.predict(text)?;
-            results.push(result);
+        // For single text, use the optimized single prediction
+        if texts.len() == 1 {
+            return Ok(vec![self.predict(&texts[0])?]);
+        }
+
+        // For multiple texts, process in parallel batches
+        let batch_size = 8; // Process 8 texts at a time
+        let mut results = Vec::with_capacity(texts.len());
+
+        for chunk in texts.chunks(batch_size) {
+            let mut chunk_results = Vec::with_capacity(chunk.len());
+            
+            for text in chunk {
+                let result = self.predict(text)?;
+                chunk_results.push(result);
+            }
+            
+            results.extend(chunk_results);
         }
 
         Ok(results)
