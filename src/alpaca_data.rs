@@ -214,12 +214,18 @@ async fn get_high_open_interest_contracts(symbol: &str, option_type: Option<&str
                         b_oi.cmp(&a_oi) // Sort descending
                     });
                     
-                    // Take top contracts
+                    // Take top contracts and add contract key information
                     if !contracts.is_empty() {
-                        result.short_term = Some(contracts[0].1.clone());
+                        let mut contract_data = contracts[0].1.clone();
+                        // Add contract key information to the contract data
+                        contract_data["contract_key"] = serde_json::Value::String(contracts[0].0.clone());
+                        result.short_term = Some(contract_data);
                     }
                     if contracts.len() > 1 {
-                        result.leap = Some(contracts[1].1.clone());
+                        let mut contract_data = contracts[1].1.clone();
+                        // Add contract key information to the contract data
+                        contract_data["contract_key"] = serde_json::Value::String(contracts[1].0.clone());
+                        result.leap = Some(contract_data);
                     }
                 }
             }
@@ -280,39 +286,177 @@ fn calculate_undervalued_indicators(contract: &Value, _spot_price: f64, composit
     indicators
 }
 
-// Calculate financial metrics for an option contract
+// Calculate financial metrics for an option contract using options-specific data
 pub fn calculate_option_financial_metrics(contract: &Value) -> Option<crate::types::MetricsResult> {
-    // Extract price history from contract
-    let prices = if let Some(daily_bar) = contract.get("dailyBar") {
-        // Use daily bar data if available
-        let close = daily_bar.get("c")?.as_f64()?;
-        let open = daily_bar.get("o")?.as_f64()?;
-        let high = daily_bar.get("h")?.as_f64()?;
-        let low = daily_bar.get("l")?.as_f64()?;
-        vec![open, high, low, close]
-    } else if let Some(latest_quote) = contract.get("latestQuote") {
-        // Use latest quote if no daily bar
-        let ask = latest_quote.get("ap")?.as_f64()?;
-        let bid = latest_quote.get("bp")?.as_f64()?;
-        vec![bid, ask]
-    } else {
-        return None;
-    };
+    // Extract option-specific data
+    let entry_price = contract.get("latestQuote")
+        .and_then(|q| q.get("ap"))
+        .and_then(|p| p.as_f64())
+        .unwrap_or(0.0);
     
-    // Calculate returns from prices
-    let returns = crate::types::compute_returns_from_prices(&prices);
-    if returns.len() < 2 {
+    let strike_price = contract.get("contract_key")
+        .and_then(|k| k.as_str())
+        .map(parse_strike_price_from_contract_key)
+        .unwrap_or(0.0);
+    
+    let volume = contract.get("latestQuote")
+        .and_then(|q| q.get("as"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as f64;
+    
+    let implied_volatility = contract.get("implied_volatility")
+        .and_then(|iv| iv.as_f64())
+        .unwrap_or(0.3);
+    
+    // Skip if we don't have essential data
+    if entry_price <= 0.0 {
         return None;
     }
     
-    // Calculate metrics (using daily periods, 252 trading days per year)
-    Some(crate::types::compute_metrics_from_returns(
-        &returns,
-        0.05, // 5% risk-free rate
-        0.08, // 8% target return
-        252,  // Daily periods
-        None, // Use default weights
-    ))
+    // Use a default strike price if not available
+    let strike_price = if strike_price > 0.0 { strike_price } else { entry_price * 1.1 };
+    
+    // Calculate options-specific metrics
+    let time_to_expiry = calculate_time_to_expiry(contract);
+    let moneyness = if strike_price > 0.0 { entry_price / strike_price } else { 1.0 };
+    
+    // Estimate expected return based on moneyness and volatility
+    let expected_return = if moneyness > 0.8 && moneyness < 1.2 {
+        // Near-the-money options have higher expected returns
+        implied_volatility * 0.5
+    } else {
+        // Out-of-the-money options have lower expected returns
+        implied_volatility * 0.2
+    };
+    
+    // Calculate volatility (use implied volatility as base)
+    let volatility = implied_volatility * (1.0 + (volume / 10000.0).min(1.0));
+    
+    // Calculate Sharpe ratio (simplified)
+    let risk_free_rate = 0.05; // 5% annual
+    let sharpe = if volatility > 0.0 {
+        (expected_return - risk_free_rate / 252.0) / volatility
+    } else {
+        0.0
+    };
+    
+    // Calculate Sortino ratio (using volatility as downside deviation proxy)
+    let sortino = if volatility > 0.0 {
+        (expected_return - risk_free_rate / 252.0) / (volatility * 0.8) // Assume 80% of volatility is downside
+    } else {
+        0.0
+    };
+    
+    // Calculate max drawdown (estimated based on option characteristics)
+    let max_drawdown = if time_to_expiry > 0.0 {
+        let time_factor = (time_to_expiry / 30.0).min(1.0);
+        (1.0 - time_factor) * 0.5 + 0.1 // Range from 10% to 60% drawdown
+    } else {
+        0.3 // Default 30% for unknown expiry
+    };
+    
+    // Calculate CAGR (annualized expected return)
+    let cagr = expected_return * 252.0; // Annualize daily return
+    
+    // Calculate Calmar ratio
+    let calmar = if max_drawdown > 0.0 { cagr / max_drawdown } else { 0.0 };
+    
+    // Calculate Kelly fraction (simplified for options)
+    let kelly = if volatility > 0.0 {
+        let win_prob = if moneyness > 0.9 { 0.6 } else { 0.4 }; // Estimate win probability
+        let avg_win = expected_return * 2.0; // Estimate average win
+        let avg_loss = entry_price; // Average loss is premium paid
+        ((win_prob * avg_win - (1.0 - win_prob) * avg_loss) / avg_win).clamp(0.0, 0.25)
+    } else {
+        0.0
+    };
+    
+    // Calculate composite score
+    let composite_score = 0.4 * sharpe + 0.4 * sortino + 0.2 * calmar;
+    
+    Some(crate::types::MetricsResult {
+        n_periods: 1,
+        mean_return: expected_return,
+        volatility,
+        downside_deviation: volatility * 0.8,
+        cagr,
+        max_drawdown,
+        sharpe,
+        sortino,
+        calmar,
+        kelly_fraction: kelly,
+        composite_score,
+    })
+}
+
+// Calculate time to expiry in days
+fn calculate_time_to_expiry(contract: &Value) -> f64 {
+    // Try to get expiration date from contract key first
+    if let Some(expiration_str) = contract.get("contract_key")
+        .and_then(|k| k.as_str())
+        .map(parse_expiration_date_from_contract_key)
+        .filter(|s| !s.is_empty())
+    {
+        if let Ok(expiration_date) = chrono::NaiveDate::parse_from_str(&expiration_str, "%Y-%m-%d") {
+            let today = chrono::Utc::now().date_naive();
+            let duration = expiration_date.signed_duration_since(today);
+            let days = duration.num_days() as f64;
+            return if days > 0.0 { days } else { 1.0 }; // Minimum 1 day
+        }
+    }
+    
+    // Fallback: try to get from expiration_date field directly
+    if let Some(expiration_str) = contract.get("expiration_date")
+        .and_then(|e| e.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        if let Ok(expiration_date) = chrono::NaiveDate::parse_from_str(expiration_str, "%Y-%m-%d") {
+            let today = chrono::Utc::now().date_naive();
+            let duration = expiration_date.signed_duration_since(today);
+            let days = duration.num_days() as f64;
+            return if days > 0.0 { days } else { 1.0 }; // Minimum 1 day
+        }
+    }
+    
+    30.0 // Default to 30 days if we can't parse
+}
+
+// Parse strike price from contract key (format: SYMBOLYYMMDDC/PSSTRIKEPRICE)
+fn parse_strike_price_from_contract_key(contract_key: &str) -> f64 {
+    // Contract key format: SYMBOLYYMMDDC/PSSTRIKEPRICE
+    // Example: AAPL240119C00150000 (AAPL, 2024-01-19, Call, $150.00)
+    if contract_key.len() >= 15 {
+        // Extract the strike price part (last 8 characters, but we need to handle decimal)
+        let strike_part = &contract_key[contract_key.len()-8..];
+        if let Ok(strike_int) = strike_part.parse::<u32>() {
+            // Convert from integer representation to decimal (divide by 1000)
+            return strike_int as f64 / 1000.0;
+        }
+    }
+    0.0
+}
+
+// Parse expiration date from contract key (format: SYMBOLYYMMDDC/PSSTRIKEPRICE)
+fn parse_expiration_date_from_contract_key(contract_key: &str) -> String {
+    // Contract key format: SYMBOLYYMMDDC/PSSTRIKEPRICE
+    // Example: AAPL240119C00150000 (AAPL, 2024-01-19, Call, $150.00)
+    if contract_key.len() >= 15 {
+        // Extract the date part (YYMMDD) - positions 4-9 from the end
+        let date_part = &contract_key[contract_key.len()-15..contract_key.len()-9];
+        if date_part.len() == 6 {
+            // Parse YYMMDD format
+            if let (Ok(year), Ok(month), Ok(day)) = (
+                date_part[0..2].parse::<u32>(),
+                date_part[2..4].parse::<u32>(),
+                date_part[4..6].parse::<u32>(),
+            ) {
+                // Convert 2-digit year to 4-digit (assuming 20xx)
+                let full_year = 2000 + year;
+                return format!("{:04}-{:02}-{:02}", full_year, month, day);
+            }
+        }
+    }
+    String::new()
 }
 
 // Convert option analysis to trading signal
@@ -330,22 +474,42 @@ pub fn convert_to_trading_signal(
         .and_then(|p| p.as_f64())
         .unwrap_or(0.0);
     
-    let strike_price = contract.get("strike_price")
-        .and_then(|s| s.as_f64())
+    // Extract strike price from contract key
+    let strike_price = contract.get("contract_key")
+        .and_then(|k| k.as_str())
+        .map(parse_strike_price_from_contract_key)
         .unwrap_or(0.0);
     
-    let expiration_date = contract.get("expiration_date")
-        .and_then(|e| e.as_str())
-        .unwrap_or("")
-        .to_string();
+    // Extract expiration date from contract key
+    let expiration_date = contract.get("contract_key")
+        .and_then(|k| k.as_str())
+        .map(parse_expiration_date_from_contract_key)
+        .unwrap_or_else(|| {
+            // Fallback to contract field if available
+            contract.get("expiration_date")
+                .and_then(|e| e.as_str())
+                .unwrap_or("")
+                .to_string()
+        });
     
     let volume = contract.get("latestQuote")
         .and_then(|q| q.get("as"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     
+    // Extract open interest - try multiple possible field names
     let open_interest = contract.get("open_interest")
         .and_then(|oi| oi.as_u64())
+        .or_else(|| contract.get("oi").and_then(|oi| oi.as_u64()))
+        .or_else(|| contract.get("openInterest").and_then(|oi| oi.as_u64()))
+        .or_else(|| contract.get("outstanding_contracts").and_then(|oi| oi.as_u64()))
+        .or_else(|| {
+            // Fallback to volume as proxy for open interest when OI is not available
+            // This is common in market data APIs where OI is not provided
+            contract.get("latestQuote")
+                .and_then(|q| q.get("as"))
+                .and_then(|v| v.as_u64())
+        })
         .unwrap_or(0);
     
     // Calculate Greeks (simplified approximations)
