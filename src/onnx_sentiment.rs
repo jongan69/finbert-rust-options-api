@@ -13,8 +13,6 @@ use tokio::sync::Mutex;
 pub struct SentimentResult {
     pub sentiment: String,
     pub confidence: f64,
-    #[allow(dead_code)]
-    pub scores: Vec<f64>,
 }
 
 pub struct OnnxSentimentModel {
@@ -251,7 +249,6 @@ impl OnnxSentimentModel {
         Ok(SentimentResult {
             sentiment,
             confidence,
-            scores: scores.iter().map(|&x| f64::from(x)).collect(),
         })
     }
 
@@ -276,18 +273,6 @@ pub async fn initialize_onnx_sentiment_model() -> Result<OnnxSentimentModelArc> 
     Ok(Arc::new(Mutex::new(Some(model))))
 }
 
-#[allow(dead_code)]
-pub async fn predict_sentiment(
-    model_arc: &OnnxSentimentModelArc,
-    text: &str,
-) -> Result<SentimentResult> {
-    let mut model_guard = model_arc.lock().await;
-    let model = model_guard
-        .as_mut()
-        .ok_or_else(|| anyhow::anyhow!("Sentiment model not initialized"))?;
-
-    model.predict(text)
-}
 
 pub async fn predict_sentiment_batch(
     model_arc: &OnnxSentimentModelArc,

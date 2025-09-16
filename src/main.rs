@@ -89,21 +89,6 @@ impl AppConfig {
     }
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            max_concurrent_requests: 10,
-            sentiment_model_path: "finbert-onnx".to_string(),
-            alpaca_api_key: std::env::var("APCA_API_KEY_ID").unwrap_or_default(),
-            alpaca_secret_key: std::env::var("APCA_API_SECRET_KEY").unwrap_or_default(),
-            alpaca_base_url: std::env::var("APCA_BASE_URL").unwrap_or_else(|_| "https://paper-api.alpaca.markets".to_string()),
-            server_host: "127.0.0.1".to_string(),
-            server_port: 3000,
-            request_timeout_secs: 60,
-            max_text_length: 10000,
-        }
-    }
-}
 
 // Thread-safe sentiment model with lazy initialization
 static ONNX_SENTIMENT_MODEL: Lazy<Mutex<Option<OnnxSentimentModelArc>>> = Lazy::new(|| {
@@ -393,10 +378,27 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
     println!("Filtered out {} crypto symbols: {:?}", crypto_symbols.len(), crypto_symbols);
     
     // Analyze options for unique symbols in parallel
-    let overall_sentiment = if sentiments.iter().any(|s| s.sentiment == "positive") {
+    // Calculate weighted overall sentiment based on confidence scores
+    let (positive_weight, negative_weight) = sentiments.iter()
+        .fold((0.0, 0.0), |(pos, neg), sentiment| {
+            match sentiment.sentiment.as_str() {
+                "positive" => (pos + sentiment.confidence, neg),
+                "negative" => (pos, neg + sentiment.confidence),
+                _ => (pos, neg), // neutral sentiments don't contribute
+            }
+        });
+    
+    let overall_sentiment = if positive_weight > negative_weight * 1.2 {
         "call"
-    } else {
+    } else if negative_weight > positive_weight * 1.2 {
         "put"
+    } else {
+        // Mixed sentiment - use a more nuanced approach
+        if positive_weight > negative_weight {
+            "call"
+        } else {
+            "put"
+        }
     };
     
     // Create futures for parallel options analysis
@@ -506,7 +508,7 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
         b_max_score.partial_cmp(&a_max_score).unwrap_or(std::cmp::Ordering::Equal)
     });
     
-    // Convert options analysis to trading signals
+    // Convert options analysis to trading signals with risk filtering
     let mut trading_signals = Vec::new();
     for symbol_analysis in &options_analysis {
         for option in &symbol_analysis.options_analysis {
@@ -521,7 +523,11 @@ async fn perform_analysis(config: &AppConfig) -> anyhow::Result<TradingBotRespon
                 sentiment_score,
                 overall_sentiment,
             );
-            trading_signals.push(signal);
+            
+            // Filter out extremely high-risk signals
+            if signal.risk_score < 0.9 && signal.confidence > 0.1 {
+                trading_signals.push(signal);
+            }
         }
     }
     
