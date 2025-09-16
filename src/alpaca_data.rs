@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 use once_cell::sync::Lazy;
 use dashmap::DashMap;
+use chrono::Datelike;
 
 // Global HTTP client for connection pooling
 static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
@@ -1093,8 +1094,8 @@ pub fn convert_to_trading_signal(
     };
     let max_loss = entry_price; // For long options, max loss is premium paid
     
-    // Determine time horizon
-    let time_horizon = if option_analysis.contract_type == "leap" { "LEAP" } else { "SHORT_TERM" };
+    // Determine time horizon based on actual expiration date
+    let time_horizon = calculate_time_horizon_from_expiration(&expiration_date);
     
     // Calculate combined risk score (technical + fundamental)
     let technical_risk_score = calculate_dynamic_risk_score(
@@ -1543,6 +1544,26 @@ fn calculate_dynamic_sector_exposure(symbols: &[String]) -> std::collections::Ha
     }
     
     sector_exposure
+}
+
+// Calculate time horizon based on expiration date
+fn calculate_time_horizon_from_expiration(expiration_date: &str) -> &'static str {
+    // Parse the expiration date (format: "YYYY-MM-DD")
+    if let Ok(exp_date) = chrono::NaiveDate::parse_from_str(expiration_date, "%Y-%m-%d") {
+        let current_year = chrono::Utc::now().year();
+        let expiration_year = exp_date.year();
+        
+        // LEAP options: expiration year is not the current year
+        // SHORT_TERM options: expiration year is the current year
+        if expiration_year != current_year {
+            "LEAP"
+        } else {
+            "SHORT_TERM"
+        }
+    } else {
+        // Fallback if date parsing fails
+        "SHORT_TERM"
+    }
 }
 
 // Classify symbol into sector (simplified classification)
