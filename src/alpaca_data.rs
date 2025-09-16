@@ -184,6 +184,19 @@ pub async fn analyze_ticker_options(
     }))
 }
 
+// Debug function to log contract data structure
+fn debug_contract_data(contract: &Value, symbol: &str) {
+    eprintln!("DEBUG: Contract data for {}: {}", symbol, serde_json::to_string_pretty(contract).unwrap_or_else(|_| "Failed to serialize".to_string()));
+    
+    if let Some(contract_key) = contract.get("contract_key").and_then(|k| k.as_str()) {
+        eprintln!("DEBUG: Contract key: {}", contract_key);
+        eprintln!("DEBUG: Parsed strike price: {}", parse_strike_price_from_contract_key(contract_key));
+        eprintln!("DEBUG: Parsed expiration date: {}", parse_expiration_date_from_contract_key(contract_key));
+    } else {
+        eprintln!("DEBUG: No contract_key found in contract data");
+    }
+}
+
 // Get high open interest contracts
 async fn get_high_open_interest_contracts(symbol: &str, option_type: Option<&str>) -> HighOpenInterestResult {
     let mut result = HighOpenInterestResult {
@@ -219,12 +232,16 @@ async fn get_high_open_interest_contracts(symbol: &str, option_type: Option<&str
                         let mut contract_data = contracts[0].1.clone();
                         // Add contract key information to the contract data
                         contract_data["contract_key"] = serde_json::Value::String(contracts[0].0.clone());
+                        // Debug the contract data
+                        debug_contract_data(&contract_data, symbol);
                         result.short_term = Some(contract_data);
                     }
                     if contracts.len() > 1 {
                         let mut contract_data = contracts[1].1.clone();
                         // Add contract key information to the contract data
                         contract_data["contract_key"] = serde_json::Value::String(contracts[1].0.clone());
+                        // Debug the contract data
+                        debug_contract_data(&contract_data, symbol);
                         result.leap = Some(contract_data);
                     }
                 }
@@ -425,14 +442,57 @@ fn calculate_time_to_expiry(contract: &Value) -> f64 {
 fn parse_strike_price_from_contract_key(contract_key: &str) -> f64 {
     // Contract key format: SYMBOLYYMMDDC/PSSTRIKEPRICE
     // Example: AAPL240119C00150000 (AAPL, 2024-01-19, Call, $150.00)
+    
+    // Handle different possible formats
     if contract_key.len() >= 15 {
-        // Extract the strike price part (last 8 characters, but we need to handle decimal)
+        // Try the standard format first (last 8 characters)
         let strike_part = &contract_key[contract_key.len()-8..];
         if let Ok(strike_int) = strike_part.parse::<u32>() {
             // Convert from integer representation to decimal (divide by 1000)
             return strike_int as f64 / 1000.0;
         }
+        
+        // Try alternative format (last 7 characters)
+        if contract_key.len() >= 14 {
+            let strike_part = &contract_key[contract_key.len()-7..];
+            if let Ok(strike_int) = strike_part.parse::<u32>() {
+                return strike_int as f64 / 1000.0;
+            }
+        }
+        
+        // Try alternative format (last 6 characters)
+        if contract_key.len() >= 13 {
+            let strike_part = &contract_key[contract_key.len()-6..];
+            if let Ok(strike_int) = strike_part.parse::<u32>() {
+                return strike_int as f64 / 1000.0;
+            }
+        }
     }
+    
+    // If all parsing attempts fail, try to extract any numeric part at the end
+    let mut numeric_end = String::new();
+    for c in contract_key.chars().rev() {
+        if c.is_ascii_digit() {
+            numeric_end.push(c);
+        } else {
+            break;
+        }
+    }
+    
+    if !numeric_end.is_empty() {
+        numeric_end = numeric_end.chars().rev().collect();
+        if let Ok(strike_int) = numeric_end.parse::<u32>() {
+            // Try different scaling factors
+            if strike_int > 1000000 {
+                return strike_int as f64 / 1000.0; // 6+ digits, likely in thousandths
+            } else if strike_int > 10000 {
+                return strike_int as f64 / 100.0;  // 5 digits, likely in hundredths
+            } else {
+                return strike_int as f64; // 4 or fewer digits, likely whole dollars
+            }
+        }
+    }
+    
     0.0
 }
 
@@ -440,22 +500,60 @@ fn parse_strike_price_from_contract_key(contract_key: &str) -> f64 {
 fn parse_expiration_date_from_contract_key(contract_key: &str) -> String {
     // Contract key format: SYMBOLYYMMDDC/PSSTRIKEPRICE
     // Example: AAPL240119C00150000 (AAPL, 2024-01-19, Call, $150.00)
-    if contract_key.len() >= 15 {
-        // Extract the date part (YYMMDD) - positions 4-9 from the end
-        let date_part = &contract_key[contract_key.len()-15..contract_key.len()-9];
-        if date_part.len() == 6 {
-            // Parse YYMMDD format
+    
+    // Try different positions for the date part
+    let possible_positions = vec![
+        (15, 9),  // Standard format: last 15 chars, skip last 9
+        (14, 8),  // Alternative format: last 14 chars, skip last 8
+        (13, 7),  // Alternative format: last 13 chars, skip last 7
+        (12, 6),  // Alternative format: last 12 chars, skip last 6
+    ];
+    
+    for (total_len, skip_end) in possible_positions {
+        if contract_key.len() >= total_len {
+            let start_pos = contract_key.len() - total_len;
+            let end_pos = contract_key.len() - skip_end;
+            
+            if end_pos > start_pos && end_pos <= contract_key.len() {
+                let date_part = &contract_key[start_pos..end_pos];
+                if date_part.len() == 6 {
+                    // Parse YYMMDD format
+                    if let (Ok(year), Ok(month), Ok(day)) = (
+                        date_part[0..2].parse::<u32>(),
+                        date_part[2..4].parse::<u32>(),
+                        date_part[4..6].parse::<u32>(),
+                    ) {
+                        // Validate date components
+                        if month >= 1 && month <= 12 && day >= 1 && day <= 31 {
+                            // Convert 2-digit year to 4-digit (assuming 20xx)
+                            let full_year = 2000 + year;
+                            return format!("{:04}-{:02}-{:02}", full_year, month, day);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // If standard parsing fails, try to find any 6-digit sequence that looks like a date
+    for i in 0..=contract_key.len().saturating_sub(6) {
+        let date_part = &contract_key[i..i+6];
+        if date_part.chars().all(|c| c.is_ascii_digit()) {
             if let (Ok(year), Ok(month), Ok(day)) = (
                 date_part[0..2].parse::<u32>(),
                 date_part[2..4].parse::<u32>(),
                 date_part[4..6].parse::<u32>(),
             ) {
-                // Convert 2-digit year to 4-digit (assuming 20xx)
-                let full_year = 2000 + year;
-                return format!("{:04}-{:02}-{:02}", full_year, month, day);
+                // Validate date components
+                if month >= 1 && month <= 12 && day >= 1 && day <= 31 {
+                    // Convert 2-digit year to 4-digit (assuming 20xx)
+                    let full_year = 2000 + year;
+                    return format!("{:04}-{:02}-{:02}", full_year, month, day);
+                }
             }
         }
     }
+    
     String::new()
 }
 
@@ -474,23 +572,45 @@ pub fn convert_to_trading_signal(
         .and_then(|p| p.as_f64())
         .unwrap_or(0.0);
     
-    // Extract strike price from contract key
-    let strike_price = contract.get("contract_key")
-        .and_then(|k| k.as_str())
-        .map(parse_strike_price_from_contract_key)
-        .unwrap_or(0.0);
+    // Extract strike price from contract key with debugging
+    let strike_price = if let Some(contract_key) = contract.get("contract_key").and_then(|k| k.as_str()) {
+        let parsed_strike = parse_strike_price_from_contract_key(contract_key);
+        if parsed_strike > 0.0 {
+            parsed_strike
+        } else {
+            // Try to extract from other possible fields
+            contract.get("strike_price")
+                .and_then(|s| s.as_f64())
+                .or_else(|| contract.get("strike").and_then(|s| s.as_f64()))
+                .unwrap_or(0.0)
+        }
+    } else {
+        // Fallback: try to extract from other possible fields
+        contract.get("strike_price")
+            .and_then(|s| s.as_f64())
+            .or_else(|| contract.get("strike").and_then(|s| s.as_f64()))
+            .unwrap_or(0.0)
+    };
     
-    // Extract expiration date from contract key
-    let expiration_date = contract.get("contract_key")
-        .and_then(|k| k.as_str())
-        .map(parse_expiration_date_from_contract_key)
-        .unwrap_or_else(|| {
+    // Extract expiration date from contract key with debugging
+    let expiration_date = if let Some(contract_key) = contract.get("contract_key").and_then(|k| k.as_str()) {
+        let parsed_date = parse_expiration_date_from_contract_key(contract_key);
+        if !parsed_date.is_empty() {
+            parsed_date
+        } else {
             // Fallback to contract field if available
             contract.get("expiration_date")
                 .and_then(|e| e.as_str())
                 .unwrap_or("")
                 .to_string()
-        });
+        }
+    } else {
+        // Fallback to contract field if available
+        contract.get("expiration_date")
+            .and_then(|e| e.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     
     let volume = contract.get("latestQuote")
         .and_then(|q| q.get("as"))
