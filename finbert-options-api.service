@@ -1,0 +1,19 @@
+After=network.target
+
+[Service]
+Type=simple
+User=jonathangan
+WorkingDirectory=/home/jonathangan/finbert-rust-options-api
+EnvironmentFile=/home/jonathangan/finbert-rust-options-api/.env
+ExecStart=/home/jonathangan/finbert-rust-options-api/target/release/finbert-rust-options-api
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits for Raspberry Pi
+LimitNOFILE=65536
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
